@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "writer": "./src/demo_agent/writer.py:graph",
+    "approval": "./src/demo_agent/approval.py:graph"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "lgview",
+  "version": "0.1.0",
+  "description": "A fast, local, open-source web UI for any LangGraph server. Point it at `langgraph dev` and see your graph, its state, and every run.",
+  "keywords": [
+    "langgraph",
+    "langchain",
+    "agents",
+    "visualization",
+    "devtools",
+    "graph",
+    "studio"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lgview": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:web && npm run build:cli",
+    "build:web": "vite build",
+    "build:cli": "node scripts/build-cli.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@dagrejs/dagre": "^1.1.4",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "@xyflow/react": "^12.3.5",
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
