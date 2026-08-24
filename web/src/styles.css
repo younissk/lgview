@@ -286,13 +286,15 @@ select { padding-right: 22px; }
 
 /* ── json tree ───────────────────────────────────────────────────────────── */
 .json { font-family: var(--mono); font-size: 11.5px; line-height: 1.65; }
-.json-row { display: flex; align-items: baseline; gap: 5px; white-space: pre-wrap; word-break: break-word; }
+.json-row { display: flex; align-items: baseline; gap: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .json-row-toggle { cursor: pointer; }
 .json-row-toggle:hover { background: rgba(255, 255, 255, 0.03); }
 .json-caret { background: none; border: none; color: var(--text-faint); padding: 0; width: 10px; font-size: 9px; }
-.json-key { color: var(--indigo); }
+/* Keys must never break mid-word -- `topic` wrapping to `top` / `ic:` reads as
+   two different fields. Values wrap instead. */
+.json-key { color: var(--indigo); flex: 0 0 auto; white-space: nowrap; }
 .json-key::after { content: ':'; color: var(--text-faint); }
-.json-string { color: var(--accent); }
+.json-string { color: var(--accent); min-width: 0; overflow-wrap: anywhere; }
 .json-number { color: #fca5a5; }
 .json-boolean { color: var(--amber); }
 .json-null { color: var(--text-faint); }
