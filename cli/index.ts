@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DEFAULT_PORT, DEFAULT_SERVER, parseCliArgs, type Options } from './args.ts'
-import { handleProxy } from './proxy.ts'
+import { handleProxy, isLoopbackRequest } from './proxy.ts'
 import { serveStatic } from './static.ts'
 
 const VERSION = process.env.LGVIEW_VERSION ?? '0.1.0'
@@ -24,7 +24,6 @@ const HELP = `
   Options
     -s, --server <url>   LangGraph server to connect to  (default ${DEFAULT_SERVER})
     -p, --port <n>       Port to serve the UI on         (default ${DEFAULT_PORT})
-        --host <host>    Interface to bind               (default 127.0.0.1)
         --api-key <key>  Sent upstream as x-api-key, for deployed servers
         --no-open        Do not open a browser
     -v, --version        Print version
@@ -62,9 +61,40 @@ async function main(): Promise<void> {
   const server = createServer((req, res) => {
     void (async () => {
       try {
-        if (req.url === '/__lgview/config') {
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-          res.end(JSON.stringify({ defaultServer: options.server, version: VERSION, hasApiKey: Boolean(options.apiKey) }))
+        // The proxy enforces this for its own routes, but the shell and the
+        // config endpoint need it too -- otherwise a rebound hostname can load
+        // the page and read its origin.
+        if (!isLoopbackRequest(req)) {
+          res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('lgview only serves loopback requests.')
+          return
+        }
+        if (req.url?.split('?')[0] === '/__lgview/config') {
+          if (req.method !== 'GET' && req.method !== 'HEAD') {
+            res.writeHead(405, { 'content-type': 'application/json', allow: 'GET, HEAD' })
+            res.end(JSON.stringify({ error: 'method_not_allowed' }))
+            return
+          }
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          })
+          res.end(
+            JSON.stringify({
+              lgview: 1,
+              defaultServer: options.server,
+              version: VERSION,
+              hasApiKey: Boolean(options.apiKey),
+            }),
+          )
+          return
+        }
+        // Anything else under the reserved namespace is a 404, not the SPA
+        // shell -- a client probing for an endpoint must not get HTML back.
+        if (req.url?.startsWith('/__lgview/')) {
+          res.writeHead(404, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: 'not_found' }))
           return
         }
         if (await handleProxy(req, res, {
@@ -93,9 +123,12 @@ async function main(): Promise<void> {
     throw err
   })
 
-  await new Promise<void>((resolve) => server.listen(options.port, options.host, resolve))
+  // Loopback only, deliberately and unconditionally. lgview has no
+  // authentication and proxies to servers with your API key attached; exposing
+  // it on a network interface would make it an open relay. See SECURITY.md.
+  await new Promise<void>((resolve) => server.listen(options.port, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
-  const uiUrl = `http://${options.host === '0.0.0.0' ? 'localhost' : options.host}:${port}`
+  const uiUrl = `http://127.0.0.1:${port}`
 
   console.log('')
   console.log(`  lgview ${VERSION}`)

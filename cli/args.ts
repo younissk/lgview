@@ -8,7 +8,6 @@ export const DEFAULT_PORT = 4141
 export interface Options {
   server: string
   port: number
-  host: string
   apiKey?: string
   open: boolean
 }
@@ -19,7 +18,6 @@ export function parseCliArgs(argv: string[]): Options | { help: true } | { versi
     options: {
       server: { type: 'string', short: 's' },
       port: { type: 'string', short: 'p' },
-      host: { type: 'string' },
       'api-key': { type: 'string' },
       open: { type: 'boolean', default: true },
       version: { type: 'boolean', short: 'v' },
@@ -40,7 +38,6 @@ export function parseCliArgs(argv: string[]): Options | { help: true } | { versi
   return {
     server: normalizeServerUrl(values.server ?? DEFAULT_SERVER),
     port,
-    host: values.host ?? '127.0.0.1',
     apiKey: values['api-key'],
     open: values.open !== false,
   }

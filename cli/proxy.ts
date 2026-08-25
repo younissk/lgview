@@ -12,6 +12,8 @@
  *      server and a deployed one is a one-field change in the UI.
  *   3. Dev and production behave identically -- the Vite dev server mounts this
  *      exact handler as middleware.
+ *
+ * This is the most security-sensitive file in the project. See SECURITY.md.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
@@ -35,7 +37,37 @@ const HOP_BY_HOP = new Set([
 ])
 
 /** Request headers we refuse to relay upstream, on top of the hop-by-hop set. */
-const STRIPPED_REQUEST_HEADERS = new Set([UPSTREAM_HEADER, API_KEY_HEADER, 'cookie', 'origin', 'referer'])
+const STRIPPED_REQUEST_HEADERS = new Set([
+  UPSTREAM_HEADER,
+  API_KEY_HEADER,
+  'cookie',
+  'origin',
+  'referer',
+  // Fetch metadata is about the browser->lgview hop and means nothing upstream.
+  'sec-fetch-site',
+  'sec-fetch-mode',
+  'sec-fetch-dest',
+  'sec-fetch-user',
+])
+
+/**
+ * Response headers we never relay. `set-cookie` is the important one: cookies
+ * are scoped by host and ignore the port, so a cookie from an upstream would
+ * be planted on 127.0.0.1 for every other dev server on the machine.
+ */
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  'set-cookie',
+  'set-cookie2',
+  'access-control-allow-origin',
+  'access-control-allow-credentials',
+  'access-control-allow-headers',
+  'access-control-allow-methods',
+  'access-control-expose-headers',
+  'content-security-policy',
+  'content-security-policy-report-only',
+  // Rewritten or dropped deliberately; see handleProxy.
+  'location',
+])
 
 export class ProxyError extends Error {
   readonly status: number
@@ -46,26 +78,48 @@ export class ProxyError extends Error {
   }
 }
 
+/** True when the request's Host header names a loopback address. */
+export function isLoopbackRequest(req: IncomingMessage): boolean {
+  return isLoopbackHost(req.headers.host ?? '')
+}
+
+function isLoopbackHost(host: string): boolean {
+  const hostname = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+}
+
 /**
- * This proxy will forward to any address the page asks for, so it must only
- * ever be reachable by the page we served. A website the user happens to have
- * open must not be able to use it as a confused deputy against their intranet.
+ * Reject anything that is not a same-origin request from the page we served.
  *
- * Two checks do that. Both are cheap and neither depends on the browser
- * enforcing CORS for us:
- *   - The Host header must be a loopback name. Without this, a DNS rebinding
- *     attack can point an attacker-controlled hostname at 127.0.0.1.
- *   - If an Origin is present it must be our own. Cross-origin fetches that
- *     carry our custom header are preflighted, and we deliberately answer no
- *     CORS headers at all, so this is belt and braces.
+ * The proxy forwards to any address the page names, so a website the user
+ * happens to have open must never be able to drive it. Three checks, none of
+ * which relies on the browser enforcing CORS for us:
+ *
+ *   - The `Host` must be a loopback name. Without this, DNS rebinding points an
+ *     attacker-controlled hostname at 127.0.0.1 and sails through.
+ *   - `Sec-Fetch-Site`, when the browser sends it, must say `same-origin`.
+ *     This is the load-bearing one. `Origin` alone is not enough: browsers omit
+ *     it entirely on `<img>`, `<script>` and `no-cors fetch()` GETs, so an
+ *     Origin-only check waves through exactly the cross-site GETs an attacker
+ *     can make for free -- and those GETs are enough to read every thread and
+ *     checkpoint on the configured server.
+ *   - `Origin`, when present, must be ours.
+ *
+ * Requests with no fetch metadata and no Origin at all (curl, the test suite,
+ * another local process) are allowed through. That is deliberate: lgview binds
+ * to loopback and treats local code execution as out of scope. See SECURITY.md.
  */
 export function assertSameOrigin(req: IncomingMessage): void {
   const host = req.headers.host ?? ''
-  const hostname = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
-  const loopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
-  if (!loopback) {
+  if (!isLoopbackHost(host)) {
     throw new ProxyError(403, `refusing request with non-loopback Host header: ${host}`)
   }
+
+  const fetchSite = header(req, 'sec-fetch-site')
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    throw new ProxyError(403, `cross-site request rejected (Sec-Fetch-Site: ${fetchSite})`)
+  }
+
   const origin = req.headers.origin
   if (origin) {
     let originHost: string
@@ -80,10 +134,16 @@ export function assertSameOrigin(req: IncomingMessage): void {
   }
 }
 
-export function resolveUpstream(req: IncomingMessage, fallback?: string): URL {
-  const raw = header(req, UPSTREAM_HEADER) ?? fallback
+/**
+ * The upstream is always named explicitly by the page. There is deliberately no
+ * server-side default: a fallback would make the custom header optional, and a
+ * request with no custom header is one the browser will send cross-site without
+ * a preflight.
+ */
+export function resolveUpstream(req: IncomingMessage): URL {
+  const raw = header(req, UPSTREAM_HEADER)
   if (!raw) {
-    throw new ProxyError(400, `missing ${UPSTREAM_HEADER} header and no default server configured`)
+    throw new ProxyError(400, `missing ${UPSTREAM_HEADER} header`)
   }
   let url: URL
   try {
@@ -111,6 +171,25 @@ export function buildTargetUrl(upstream: URL, requestUrl: string): URL {
   return target
 }
 
+/**
+ * Decide whether an API key may be sent to this target.
+ *
+ * A key is issued by one server and is worthless to any other, so sending it
+ * anywhere else is pure downside: one mistyped URL in the "manage servers" box
+ * would hand a tenant-wide LangGraph Platform key to a stranger. A key is
+ * therefore only ever attached to the exact origin it was configured for, and
+ * never over plaintext http to a non-loopback host.
+ */
+export function maySendApiKey(target: URL, boundOrigin: string | undefined): boolean {
+  if (target.protocol === 'http:' && !isLoopbackHost(target.host)) return false
+  if (!boundOrigin) return true
+  try {
+    return new URL(boundOrigin).origin === target.origin
+  } catch {
+    return false
+  }
+}
+
 function splitQuery(url: string): [string, string] {
   const i = url.indexOf('?')
   return i === -1 ? [url, ''] : [url.slice(0, i), url.slice(i)]
@@ -122,9 +201,9 @@ function header(req: IncomingMessage, name: string): string | undefined {
 }
 
 export interface ProxyOptions {
-  /** Used when the page does not name an upstream (e.g. the very first load). */
+  /** The `--server` the CLI was started with, used to scope `defaultApiKey`. */
   defaultUpstream?: string
-  /** Fallback API key from the CLI, overridden per-request by the UI. */
+  /** `--api-key`. Only ever sent to `defaultUpstream`. */
   defaultApiKey?: string
   onError?: (err: unknown, target?: string) => void
 }
@@ -144,7 +223,7 @@ export async function handleProxy(
   let target: URL | undefined
   try {
     assertSameOrigin(req)
-    const upstream = resolveUpstream(req, options.defaultUpstream)
+    const upstream = resolveUpstream(req)
     target = buildTargetUrl(upstream, url)
 
     const headers = new Headers()
@@ -157,8 +236,14 @@ export async function handleProxy(
     // Compressed SSE would be buffered by some intermediaries; ask for plain bytes.
     headers.set('accept-encoding', 'identity')
 
-    const apiKey = header(req, API_KEY_HEADER) ?? options.defaultApiKey
-    if (apiKey) headers.set('x-api-key', apiKey)
+    // A key sent by the page belongs to the server the page named, so it is
+    // bound to that upstream. The CLI's key is bound to the CLI's `--server`.
+    const pageKey = header(req, API_KEY_HEADER)
+    const apiKey = pageKey ?? options.defaultApiKey
+    const boundOrigin = pageKey ? upstream.origin : options.defaultUpstream
+    if (apiKey && maySendApiKey(target, boundOrigin)) {
+      headers.set('x-api-key', apiKey)
+    }
 
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD'
     const controller = new AbortController()
@@ -176,12 +261,32 @@ export async function handleProxy(
 
     const outHeaders: Record<string, string> = {}
     upstreamResponse.headers.forEach((value, key) => {
-      if (HOP_BY_HOP.has(key.toLowerCase())) return
+      const lower = key.toLowerCase()
+      if (HOP_BY_HOP.has(lower) || STRIPPED_RESPONSE_HEADERS.has(lower)) return
       outHeaders[key] = value
     })
-    // We serve no CORS headers of our own: same-origin only, by construction.
-    delete outHeaders['access-control-allow-origin']
-    delete outHeaders['access-control-allow-credentials']
+
+    // The upstream chooses this Content-Type, and an upstream serving HTML
+    // would otherwise get to execute script on the lgview origin -- where every
+    // configured server's API key is sitting in localStorage.
+    outHeaders['x-content-type-options'] = 'nosniff'
+    outHeaders['cache-control'] = 'no-store'
+
+    // A redirect carries the browser somewhere of the upstream's choosing,
+    // without the key we attach server-side, and possibly to another origin.
+    // Same-origin hops are rewritten back through the proxy; anything else is
+    // refused rather than followed.
+    if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
+      const location = upstreamResponse.headers.get('location')
+      const rewritten = location ? rewriteLocation(location, target, upstream) : null
+      if (!rewritten) {
+        throw new ProxyError(
+          502,
+          `upstream redirected to a different origin (${location ?? 'no Location header'}); refusing to follow`,
+        )
+      }
+      outHeaders['location'] = rewritten
+    }
 
     res.writeHead(upstreamResponse.status, outHeaders)
     // Streaming responses must reach the browser as they arrive, not on close.
@@ -197,7 +302,7 @@ export async function handleProxy(
     options.onError?.(err, target?.toString())
     if (!res.headersSent) {
       const status = err instanceof ProxyError ? err.status : 502
-      res.writeHead(status, { 'content-type': 'application/json' })
+      res.writeHead(status, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' })
       res.end(
         JSON.stringify({
           error: 'lgview_proxy_error',
@@ -210,6 +315,23 @@ export async function handleProxy(
     }
     return true
   }
+}
+
+/**
+ * Map an upstream redirect back onto our own origin, or return null if it
+ * leaves the upstream entirely.
+ */
+export function rewriteLocation(location: string, target: URL, upstream: URL): string | null {
+  let resolved: URL
+  try {
+    resolved = new URL(location, target)
+  } catch {
+    return null
+  }
+  if (resolved.origin !== upstream.origin) return null
+  const basePath = upstream.pathname.replace(/\/+$/, '')
+  const path = resolved.pathname.startsWith(basePath) ? resolved.pathname.slice(basePath.length) : resolved.pathname
+  return `${PROXY_PREFIX}${path || '/'}${resolved.search}`
 }
 
 /**
@@ -264,7 +386,10 @@ async function pipeToResponse(body: ReadableStream<Uint8Array>, res: ServerRespo
       const { done, value } = await reader.read()
       if (done) break
       if (!res.write(value)) {
-        await new Promise<void>((resolve) => res.once('drain', resolve))
+        // A destroyed socket never emits 'drain', so waiting on it alone hangs
+        // this handler forever on the ordinary cancel-a-run path.
+        await waitForDrain(res)
+        if (res.destroyed || res.writableEnded) return
       }
     }
     res.end()
@@ -274,4 +399,19 @@ async function pipeToResponse(body: ReadableStream<Uint8Array>, res: ServerRespo
   } finally {
     reader.releaseLock()
   }
+}
+
+function waitForDrain(res: ServerResponse): Promise<void> {
+  if (res.destroyed || res.writableEnded) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      res.off('drain', done)
+      res.off('close', done)
+      res.off('error', done)
+      resolve()
+    }
+    res.once('drain', done)
+    res.once('close', done)
+    res.once('error', done)
+  })
 }

@@ -32,6 +32,21 @@ before(async () => {
       })
       return
     }
+    if (req.url === '/cookie') {
+      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'session=abc; Path=/' })
+      res.end('{"ok":true}')
+      return
+    }
+    if (req.url === '/redirect-local') {
+      res.writeHead(307, { location: '/ok' })
+      res.end()
+      return
+    }
+    if (req.url === '/redirect-away') {
+      res.writeHead(307, { location: 'https://evil.example/steal' })
+      res.end()
+      return
+    }
     if (req.url === '/api/nested/ok') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('{"nested":true}')
@@ -60,7 +75,12 @@ after(() => {
   upstream?.close()
 })
 
-const lg = (path, init) => fetch(`${proxyUrl}/__lg${path}`, init)
+/** The upstream header is mandatory now, so every helper call supplies it. */
+const lg = (path, init = {}) =>
+  fetch(`${proxyUrl}/__lg${path}`, {
+    ...init,
+    headers: { 'x-lgview-upstream': upstreamUrl, ...(init.headers ?? {}) },
+  })
 
 test('forwards a GET and returns the upstream body', async () => {
   const res = await lg('/ok')
@@ -101,6 +121,69 @@ test('does not relay the upstream CORS headers', async () => {
 test('honours a per-request upstream with a base path', async () => {
   const res = await lg('/nested/ok', { headers: { 'x-lgview-upstream': `${upstreamUrl}/api` } })
   assert.deepEqual(await res.json(), { nested: true })
+})
+
+test('a request that names no upstream is refused', async () => {
+  const res = await fetch(`${proxyUrl}/__lg/ok`)
+  assert.equal(res.status, 400)
+  assert.match((await res.json()).message, /missing x-lgview-upstream/)
+})
+
+test('a cross-site fetch is refused even though it carries no Origin', async () => {
+  const res = await lg('/ok', { headers: { 'sec-fetch-site': 'cross-site' } })
+  assert.equal(res.status, 403)
+  assert.match((await res.json()).message, /Sec-Fetch-Site/)
+})
+
+test('responses are marked nosniff so upstream HTML cannot execute here', async () => {
+  const res = await lg('/ok')
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
+})
+
+test('upstream Set-Cookie is never relayed onto the lgview origin', async () => {
+  const res = await lg('/cookie')
+  assert.equal(res.status, 200)
+  // Cookies ignore the port, so relaying one would plant it on 127.0.0.1 for
+  // every other dev server on the machine.
+  assert.equal(res.headers.get('set-cookie'), null)
+})
+
+test('a same-origin upstream redirect is rewritten back through the proxy', async () => {
+  const res = await lg('/redirect-local', { redirect: 'manual' })
+  assert.equal(res.status, 307)
+  assert.equal(res.headers.get('location'), '/__lg/ok')
+})
+
+test('a cross-origin upstream redirect is refused rather than followed', async () => {
+  const res = await lg('/redirect-away', { redirect: 'manual' })
+  assert.equal(res.status, 502)
+  assert.equal(res.headers.get('location'), null)
+  assert.match((await res.json()).message, /different origin/)
+})
+
+test('the CLI api key is withheld from an upstream it was not configured for', async () => {
+  seen.length = 0
+  // Proxy configured for a *different* default upstream than the one named.
+  const scoped = createServer((req, res) => {
+    void handleProxy(req, res, {
+      defaultUpstream: 'https://elsewhere.example',
+      defaultApiKey: 'sk-cli',
+    }).then((handled) => {
+      if (!handled) {
+        res.writeHead(404)
+        res.end()
+      }
+    })
+  })
+  await new Promise((resolve) => scoped.listen(0, '127.0.0.1', resolve))
+  try {
+    await fetch(`http://127.0.0.1:${scoped.address().port}/__lg/ok`, {
+      headers: { 'x-lgview-upstream': upstreamUrl },
+    })
+    assert.equal(seen.at(-1).headers['x-api-key'], undefined)
+  } finally {
+    scoped.close()
+  }
 })
 
 test('streams SSE through without buffering it into one chunk', async () => {
