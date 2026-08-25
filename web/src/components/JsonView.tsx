@@ -1,6 +1,13 @@
 /** A compact, collapsible JSON tree. Everything the inspector shows is JSON. */
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { summarize } from '../lib/format'
+
+/**
+ * How many children of one container render before the rest are collapsed
+ * behind a button. A `messages` array of 2 000 entries produced ~46 000 DOM
+ * nodes that React then re-reconciled on every streamed event.
+ */
+const CHILDREN_PER_PAGE = 100
 
 interface JsonViewProps {
   value: unknown
@@ -25,8 +32,9 @@ interface NodeProps {
   isLast: boolean
 }
 
-function JsonNode({ value, depth, defaultDepth, name, isLast }: NodeProps) {
+const JsonNode = memo(function JsonNode({ value, depth, defaultDepth, name, isLast }: NodeProps) {
   const [open, setOpen] = useState(depth < defaultDepth)
+  const [shown, setShown] = useState(CHILDREN_PER_PAGE)
 
   if (!isContainer(value)) {
     return (
@@ -75,7 +83,7 @@ function JsonNode({ value, depth, defaultDepth, name, isLast }: NodeProps) {
       </div>
       {open && (
         <>
-          {entries.map(([key, child], index) => (
+          {entries.slice(0, shown).map(([key, child], index) => (
             <JsonNode
               key={key}
               name={Array.isArray(value) ? undefined : key}
@@ -85,6 +93,17 @@ function JsonNode({ value, depth, defaultDepth, name, isLast }: NodeProps) {
               isLast={index === entries.length - 1}
             />
           ))}
+          {entries.length > shown && (
+            <div className="json-row" style={indent(depth + 1)}>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => setShown((current) => current + CHILDREN_PER_PAGE * 5)}
+              >
+                show {Math.min(CHILDREN_PER_PAGE * 5, entries.length - shown)} more of {entries.length}
+              </button>
+            </div>
+          )}
           <div className="json-row" style={indent(depth)}>
             <span className="json-punct">{closeBrace}</span>
             {!isLast && <span className="json-punct">,</span>}
@@ -93,7 +112,7 @@ function JsonNode({ value, depth, defaultDepth, name, isLast }: NodeProps) {
       )}
     </div>
   )
-}
+})
 
 function JsonScalar({ value }: { value: unknown }) {
   if (value === null) return <span className="json-null">null</span>

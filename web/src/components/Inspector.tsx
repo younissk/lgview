@@ -1,5 +1,5 @@
 /** Right-hand panel: current state, the event log, checkpoints, and schemas. */
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { AssistantSchemas, ThreadState } from '../api/types'
 import type { LogEntry, RunState } from '../state/runReducer'
 import { formatClock, formatDuration, formatRelative, shortId, summarize } from '../lib/format'
@@ -148,7 +148,7 @@ function EventsTab({ log }: { log: LogEntry[] }) {
   )
 }
 
-function EventRow({ entry }: { entry: LogEntry }) {
+const EventRow = memo(function EventRow({ entry }: { entry: LogEntry }) {
   const [open, setOpen] = useState(false)
   const expandable = entry.payload !== undefined && entry.payload !== null
   return (
@@ -156,8 +156,8 @@ function EventRow({ entry }: { entry: LogEntry }) {
       <button
         type="button"
         className="event-head"
-        aria-expanded={expandable ? open : undefined}
-        onClick={() => expandable && setOpen((prev) => !prev)}
+        aria-expanded={expandable || entry.payloadDropped ? open : undefined}
+        onClick={() => (expandable || entry.payloadDropped) && setOpen((prev) => !prev)}
       >
         <span className="event-time mono">{formatClock(entry.at)}</span>
         {/* A failed node must not wear a checkmark. */}
@@ -168,15 +168,21 @@ function EventRow({ entry }: { entry: LogEntry }) {
         <span className="event-label">{entry.label}</span>
         {entry.durationMs !== undefined && <span className="event-duration">{formatDuration(entry.durationMs)}</span>}
         {expandable && !open && <span className="event-preview">{summarize(entry.payload, 40)}</span>}
+        {entry.payloadDropped && !open && <span className="event-preview muted">payload released</span>}
       </button>
       {open && expandable && (
         <div className="event-body">
           <JsonView value={entry.payload} defaultDepth={3} />
         </div>
       )}
+      {entry.payloadDropped && open && (
+        <p className="event-body muted small">
+          Payload released to keep memory bounded. Current state is on the State tab; past states are on History.
+        </p>
+      )}
     </li>
   )
-}
+})
 
 const KIND_GLYPH: Record<LogEntry['kind'], string> = {
   meta: '•',

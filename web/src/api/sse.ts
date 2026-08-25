@@ -10,38 +10,64 @@
 import type { StreamEvent } from './types'
 
 export class SseDecoder {
-  private buffer = ''
+  /**
+   * Pieces of the line currently being assembled, joined only when it ends.
+   *
+   * Deliberately not a single accumulating string. `buffer += chunk` builds a
+   * rope, and every `indexOf` on it forces a flatten, so scanning stayed
+   * proportional to everything received rather than to the new chunk. With
+   * LangGraph re-sending full graph state each superstep, a 20 MB state froze
+   * the tab for ~15 s per step. Searching only the chunk makes it linear.
+   */
+  private pending: string[] = []
   private eventName = ''
   private dataLines: string[] = []
+  /** A `\r` at the end of a chunk may be the first half of a `\r\n`. */
+  private pendingCarriageReturn = false
 
   /** Feed a chunk of text; returns every event completed by it. */
   push(chunk: string): StreamEvent[] {
-    this.buffer += chunk
-    const events: StreamEvent[] = []
-    // Normalise CRLF and lone CR so a single split handles every line ending.
-    this.buffer = this.buffer.replace(/\r\n|\r/g, '\n')
+    let text = chunk
+    if (this.pendingCarriageReturn) {
+      // The `\r` already ended a line; swallow the `\n` that completes it.
+      if (text.startsWith('\n')) text = text.slice(1)
+      this.pendingCarriageReturn = false
+    }
+    if (text.endsWith('\r')) {
+      this.pendingCarriageReturn = true
+      text = text.slice(0, -1)
+    }
+    if (text.includes('\r')) text = text.replace(/\r\n|\r/g, '\n')
 
+    const events: StreamEvent[] = []
+    let from = 0
     let index: number
-    while ((index = this.buffer.indexOf('\n')) !== -1) {
-      const line = this.buffer.slice(0, index)
-      this.buffer = this.buffer.slice(index + 1)
-      const event = this.consumeLine(line)
+    while ((index = text.indexOf('\n', from)) !== -1) {
+      this.pending.push(text.slice(from, index))
+      from = index + 1
+      const event = this.consumeLine(this.takePending())
       if (event) events.push(event)
     }
+    if (from < text.length) this.pending.push(text.slice(from))
     return events
   }
 
   /** Flush a trailing event that arrived without its final blank line. */
   flush(): StreamEvent[] {
     const events: StreamEvent[] = []
-    if (this.buffer.length > 0) {
-      const event = this.consumeLine(this.buffer)
-      this.buffer = ''
+    if (this.pending.length > 0) {
+      const event = this.consumeLine(this.takePending())
       if (event) events.push(event)
     }
     const final = this.dispatch()
     if (final) events.push(final)
     return events
+  }
+
+  private takePending(): string {
+    const line = this.pending.length === 1 ? this.pending[0] : this.pending.join('')
+    this.pending.length = 0
+    return line
   }
 
   private consumeLine(line: string): StreamEvent | null {

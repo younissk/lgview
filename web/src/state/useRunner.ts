@@ -1,7 +1,7 @@
 /** Drives a run: opens the stream, folds events into state, handles cancel. */
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { api, ApiError, type Connection } from '../api/client'
-import type { Interrupt, RunCreate } from '../api/types'
+import type { Interrupt, RunCreate, StreamEvent } from '../api/types'
 import { initialRunState, runReducer, type RunState } from './runReducer'
 
 export interface StartOptions {
@@ -33,6 +33,10 @@ export function useRunner(
 ): Runner {
   const [run, dispatch] = useReducer(runReducer, initialRunState)
   const abortRef = useRef<AbortController | null>(null)
+  // Events arrive far faster than the screen refreshes; coalesce them so React
+  // commits once per frame rather than once per server-sent event.
+  const queue = useRef<Array<{ event: StreamEvent; at: number }>>([])
+  const flushHandle = useRef<number | null>(null)
   const runIdRef = useRef<string | undefined>(undefined)
   runIdRef.current = run.runId
   // Creating a thread and starting a run happen in the same click, one render
@@ -40,8 +44,34 @@ export function useRunner(
   const threadIdRef = useRef<string | null>(threadId)
   threadIdRef.current = threadId
 
-  // Never leave a stream open behind a closed view.
-  useEffect(() => () => abortRef.current?.abort(), [])
+  const flush = useCallback(() => {
+    flushHandle.current = null
+    if (queue.current.length === 0) return
+    const batch = queue.current
+    queue.current = []
+    dispatch({ type: 'events', events: batch })
+  }, [])
+
+  const enqueue = useCallback(
+    (event: StreamEvent, at: number) => {
+      queue.current.push({ event, at })
+      if (flushHandle.current !== null) return
+      flushHandle.current =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame(flush)
+          : (setTimeout(flush, 16) as unknown as number)
+    },
+    [flush],
+  )
+
+  // Never leave a stream open, or a pending flush, behind a closed view.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+      if (flushHandle.current !== null) cancelAnimationFrame(flushHandle.current)
+    },
+    [],
+  )
 
   const consume = useCallback(
     async (body: RunCreate, resume: boolean, overrideThreadId?: string) => {
@@ -50,17 +80,22 @@ export function useRunner(
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
+      queue.current = []
       dispatch({ type: 'start', at: Date.now(), resume })
 
       try {
         for await (const event of api.streamRun(connection, target, body, controller.signal)) {
           if (controller.signal.aborted) break
-          dispatch({ type: 'event', event, at: Date.now() })
+          enqueue(event, Date.now())
         }
+        // Drain whatever is still queued before declaring the run over, or the
+        // last few frames would be folded in after the terminal status.
+        flush()
         if (!controller.signal.aborted) {
           dispatch({ type: 'finish', status: 'done', at: Date.now() })
         }
       } catch (err) {
+        flush()
         if (controller.signal.aborted || (err as Error)?.name === 'AbortError') {
           dispatch({ type: 'finish', status: 'cancelled', at: Date.now() })
         } else {
@@ -72,7 +107,7 @@ export function useRunner(
         onSettled?.()
       }
     },
-    [connection?.url, connection?.apiKey, onSettled],
+    [connection?.url, connection?.apiKey, onSettled, enqueue, flush],
   )
 
   const start = useCallback(

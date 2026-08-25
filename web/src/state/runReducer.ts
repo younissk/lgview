@@ -30,6 +30,8 @@ export interface LogEntry {
   payload?: unknown
   durationMs?: number
   isError?: boolean
+  /** Payload released to bound memory; the entry itself is still a timeline mark. */
+  payloadDropped?: boolean
 }
 
 export interface RunState {
@@ -52,6 +54,16 @@ export interface RunState {
 
 export const MAX_LOG_ENTRIES = 500
 
+/**
+ * How many log entries keep their payload.
+ *
+ * The log held every payload by reference, and LangGraph re-sends the whole
+ * graph state on each superstep, so 600 steps of a graph with a 2 MB state
+ * pinned ~772 MB of heap and took the tab with it. Entries older than this
+ * keep their timestamp, label and timing -- only the payload is released.
+ */
+export const RETAINED_PAYLOADS = 25
+
 export const initialRunState: RunState = {
   status: 'idle',
   log: [],
@@ -70,6 +82,7 @@ export const initialRunState: RunState = {
 export type RunAction =
   | { type: 'start'; at: number; resume: boolean }
   | { type: 'event'; event: StreamEvent; at: number }
+  | { type: 'events'; events: Array<{ event: StreamEvent; at: number }> }
   | { type: 'finish'; status: RunStatus; at: number; error?: string }
   | { type: 'hydrate'; values: Record<string, unknown> | null; interrupt: Interrupt | null; next: string[] }
   | { type: 'reset' }
@@ -125,6 +138,12 @@ export function runReducer(state: RunState, action: RunAction): RunState {
 
     case 'event':
       return applyEvent(state, action.event, action.at)
+
+    case 'events':
+      // One commit per animation frame instead of one per frame off the wire.
+      // At 30 tokens/second the per-event path spent ~70% of the main thread in
+      // React, which is what made the Cancel button feel dead.
+      return action.events.reduce((acc, { event, at }) => applyEvent(acc, event, at), state)
   }
 }
 
@@ -328,8 +347,23 @@ function describeError(data: unknown): string {
 }
 
 function log(state: RunState, at: number, entry: Omit<LogEntry, 'id' | 'at'>): RunState {
-  const item: LogEntry = { ...entry, id: state.nextId, at }
+  // A `values` frame carries the entire graph state. The State tab already
+  // renders the current one in full and the History tab has the past ones, so
+  // keeping a second copy per superstep buys nothing and costs everything.
+  const item: LogEntry =
+    entry.kind === 'values'
+      ? { ...entry, payload: undefined, payloadDropped: true, id: state.nextId, at }
+      : { ...entry, id: state.nextId, at }
+
   const nextLog = state.log.length >= MAX_LOG_ENTRIES ? [...state.log.slice(1), item] : [...state.log, item]
+
+  // Release exactly one payload per append: O(1), and it keeps the number of
+  // retained payloads at a constant regardless of how long the run goes on.
+  const cutoff = nextLog.length - RETAINED_PAYLOADS - 1
+  if (cutoff >= 0 && nextLog[cutoff].payload !== undefined) {
+    nextLog[cutoff] = { ...nextLog[cutoff], payload: undefined, payloadDropped: true }
+  }
+
   return { ...state, log: nextLog, nextId: state.nextId + 1 }
 }
 

@@ -1,9 +1,10 @@
 /** React Flow node renderers. Status colour is the whole point of these. */
+import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { GraphNodeData } from '../lib/layout'
 import { formatDuration } from '../lib/format'
 
-export function GraphNodeView({ data, selected, sourcePosition, targetPosition }: NodeProps) {
+export const GraphNodeView = memo(function GraphNodeView({ data, selected, sourcePosition, targetPosition }: NodeProps) {
   const node = data as GraphNodeData
   return (
     <div className={`gnode gnode-${node.status}${selected ? ' is-selected' : ''}`}>
@@ -17,9 +18,9 @@ export function GraphNodeView({ data, selected, sourcePosition, targetPosition }
       <Handle type="source" position={sourcePosition ?? Position.Bottom} className="gnode-handle" />
     </div>
   )
-}
+})
 
-export function TerminalNodeView({ data, sourcePosition, targetPosition }: NodeProps) {
+export const TerminalNodeView = memo(function TerminalNodeView({ data, sourcePosition, targetPosition }: NodeProps) {
   const node = data as GraphNodeData
   const isStart = node.label === 'start'
   return (
@@ -29,4 +30,4 @@ export function TerminalNodeView({ data, sourcePosition, targetPosition }: NodeP
       {isStart && <Handle type="source" position={sourcePosition ?? Position.Bottom} className="gnode-handle" />}
     </div>
   )
-}
+})

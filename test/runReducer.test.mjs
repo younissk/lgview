@@ -1,6 +1,6 @@
 import { test } from 'vitest'
 import assert from 'node:assert/strict'
-import { initialRunState, runReducer, MAX_LOG_ENTRIES } from '../web/src/state/runReducer.ts'
+import { initialRunState, runReducer, MAX_LOG_ENTRIES, RETAINED_PAYLOADS } from '../web/src/state/runReducer.ts'
 
 /**
  * Payloads are captured from a live langgraph-api 0.13.0 stream, not invented.
@@ -275,4 +275,69 @@ test('an interrupt parks whichever node was mid-flight', () => {
     started(),
   )
   assert.equal(state.statuses.ask_human, 'interrupted')
+})
+
+/**
+ * The log used to hold every payload by reference. LangGraph re-sends the whole
+ * graph state each superstep, so 600 steps of a 2 MB-state graph pinned ~772 MB
+ * and took the tab with it. Entries stay as timeline marks; payloads do not.
+ */
+test('retained payloads stay bounded however long the run goes on', () => {
+  const bigDelta = { draft: 'x'.repeat(50_000) }
+  let state = started()
+  for (let i = 0; i < 400; i += 1) {
+    state = runReducer(state, {
+      type: 'event',
+      event: { event: 'updates', data: { [`node_${i}`]: bigDelta } },
+      at: 1000 + i,
+    })
+  }
+
+  const withPayload = state.log.filter((entry) => entry.payload !== undefined)
+  assert.ok(
+    withPayload.length <= RETAINED_PAYLOADS,
+    `${withPayload.length} payloads retained, expected at most ${RETAINED_PAYLOADS}`,
+  )
+  // The entries themselves survive -- only the payload is released.
+  assert.equal(state.log.length, Math.min(400, MAX_LOG_ENTRIES))
+  assert.ok(state.log.some((entry) => entry.payloadDropped))
+  // The newest entry always keeps its payload; that is the one being looked at.
+  assert.notEqual(state.log.at(-1).payload, undefined)
+})
+
+test('a values frame never retains the whole state a second time', () => {
+  const state = feed(
+    [{ event: 'values', data: { draft: 'y'.repeat(100_000), messages: [] } }],
+    started(),
+  )
+  const entry = state.log.at(-1)
+  assert.equal(entry.kind, 'values')
+  // The State tab renders the current values in full; a duplicate here is pure
+  // memory cost for a line that only needs to say "state updated".
+  assert.equal(entry.payload, undefined)
+  assert.equal(entry.payloadDropped, true)
+  // The state itself is still available.
+  assert.equal(state.values.draft.length, 100_000)
+})
+
+test('batched events fold identically to one-at-a-time dispatch', () => {
+  const events = [
+    { event: 'metadata', data: { run_id: 'r1' } },
+    { event: 'debug', data: { type: 'task', step: 1, payload: { name: 'plan' } } },
+    { event: 'debug', data: { type: 'task_result', step: 1, payload: { name: 'plan', error: null } } },
+    { event: 'updates', data: { plan: { ok: true } } },
+  ]
+  const oneAtATime = events.reduce(
+    (acc, event, i) => runReducer(acc, { type: 'event', event, at: 1000 + i }),
+    started(),
+  )
+  const batched = runReducer(started(), {
+    type: 'events',
+    events: events.map((event, i) => ({ event, at: 1000 + i })),
+  })
+
+  assert.deepEqual(batched.statuses, oneAtATime.statuses)
+  assert.deepEqual(batched.runCounts, oneAtATime.runCounts)
+  assert.equal(batched.status, oneAtATime.status)
+  assert.equal(batched.log.length, oneAtATime.log.length)
 })
