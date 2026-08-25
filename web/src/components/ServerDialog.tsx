@@ -16,15 +16,42 @@ export function ServerDialog({ open, servers, activeId, onClose, onAdd, onRemove
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const returnFocusTo = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (open) inputRef.current?.focus()
+    if (!open) return
+    // Remember where focus came from so Escape does not dump it on <body>.
+    returnFocusTo.current = document.activeElement as HTMLElement | null
+    inputRef.current?.focus()
+    return () => returnFocusTo.current?.focus?.()
   }, [open])
 
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      // `aria-modal` tells assistive tech the rest of the page is inert; it
+      // does not make Tab respect that. Without this, one Tab left the dialog
+      // and wandered the 41 tabbables still behind it.
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select, textarea, a[href]',
+      )
+      if (!focusable || focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const active = document.activeElement
+      if (event.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -34,7 +61,14 @@ export function ServerDialog({ open, servers, activeId, onClose, onAdd, onRemove
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Servers" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="LangGraph servers"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>LangGraph servers</h2>
         <p className="muted">
           Anything that speaks the LangGraph server API: <code>langgraph dev</code>, a self-hosted deployment, or a
@@ -87,7 +121,8 @@ export function ServerDialog({ open, servers, activeId, onClose, onAdd, onRemove
         </form>
 
         <p className="muted small">
-          The key is sent from the lgview process as <code>x-api-key</code>, never stored on a server.
+          The key is kept for this browser tab only and sent from the lgview process as <code>x-api-key</code>,
+          to this server and no other. It is never written to disk.
         </p>
 
         <div className="modal-actions">

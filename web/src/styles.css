@@ -351,6 +351,12 @@ select { padding-right: 22px; }
 .gnode-label { font-weight: 520; white-space: nowrap; }
 .gnode-meta { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--text-faint); }
 .gnode-duration { color: var(--accent); }
+.gnode-glyph { font-size: 11px; line-height: 1; }
+.gnode-glyph-done { color: var(--accent); }
+.gnode-glyph-error { color: var(--red); }
+.gnode-glyph-interrupted { color: var(--violet); }
+.gnode-glyph-stopped { color: var(--text-faint); }
+.gnode-glyph-queued { color: var(--indigo); }
 .gnode-badge { background: var(--bg-hover); border-radius: 99px; padding: 0 5px; }
 .gnode.is-selected { box-shadow: 0 0 0 2px var(--indigo); }
 

@@ -16,11 +16,68 @@ export interface ServerEntry {
   apiKey?: string
 }
 
+/** What actually goes to disk: the server list, never the keys. */
+interface StoredServer {
+  id: string
+  url: string
+}
+
 export type ConnectionStatus = 'unknown' | 'checking' | 'online' | 'offline'
 
-const STORAGE_KEY = 'lgview.servers.v1'
+const STORAGE_KEY = 'lgview.servers.v2'
 const ACTIVE_KEY = 'lgview.activeServer.v1'
+const KEY_STORAGE_PREFIX = 'lgview.apiKey.'
 const HEALTH_INTERVAL_MS = 5000
+
+/**
+ * API keys live in sessionStorage, not localStorage.
+ *
+ * A LangGraph Platform key unlocks every thread and checkpoint in a tenant --
+ * that is, other people's conversations. Persisting it to disk indefinitely so
+ * that any script running on this origin can read it forever is a poor trade
+ * for saving one paste. sessionStorage is scoped to the tab and cleared when it
+ * closes, which is the right lifetime for a credential in a dev tool.
+ *
+ * The v1 key is read once and discarded so existing users are not silently
+ * left with a key on disk.
+ */
+function readApiKey(id: string): string | undefined {
+  try {
+    return window.sessionStorage.getItem(KEY_STORAGE_PREFIX + id) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writeApiKey(id: string, apiKey: string | undefined): void {
+  try {
+    if (apiKey) window.sessionStorage.setItem(KEY_STORAGE_PREFIX + id, apiKey)
+    else window.sessionStorage.removeItem(KEY_STORAGE_PREFIX + id)
+  } catch {
+    // Storage disabled. The key still works for this page's lifetime.
+  }
+}
+
+/** Drop anything a previous version wrote to disk, keys included. */
+function migrateFromV1(): void {
+  try {
+    const legacy = window.localStorage.getItem('lgview.servers.v1')
+    if (legacy === null) return
+    window.localStorage.removeItem('lgview.servers.v1')
+    const parsed: unknown = JSON.parse(legacy)
+    if (!Array.isArray(parsed)) return
+    const cleaned: StoredServer[] = parsed
+      .filter((entry): entry is ServerEntry => Boolean(entry) && typeof entry === 'object' && 'url' in entry)
+      .map((entry) => ({ id: entry.id, url: entry.url }))
+    if (cleaned.length > 0 && window.localStorage.getItem(STORAGE_KEY) === null) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned))
+    }
+  } catch {
+    // A hand-edited or truncated value; starting fresh is the safe outcome.
+  }
+}
+
+migrateFromV1()
 
 export function normalizeUrl(input: string): string {
   const trimmed = input.trim()
@@ -38,7 +95,12 @@ function entryId(url: string): string {
 }
 
 export function useServers() {
-  const [servers, setServers] = useLocalStorage<ServerEntry[]>(STORAGE_KEY, [])
+  const [stored, setServers] = useLocalStorage<StoredServer[]>(STORAGE_KEY, [])
+  // Shape-check on read: a hand-edited or future-version payload used to be
+  // cast straight through, and the first `.url` access blanked the page.
+  const servers: ServerEntry[] = (Array.isArray(stored) ? stored : [])
+    .filter((entry): entry is StoredServer => Boolean(entry) && typeof entry.url === 'string' && typeof entry.id === 'string')
+    .map((entry) => ({ ...entry, apiKey: readApiKey(entry.id) }))
   const [activeId, setActiveId] = useLocalStorage<string | null>(ACTIVE_KEY, null)
   const [status, setStatus] = useState<ConnectionStatus>('unknown')
   const [info, setInfo] = useState<ServerInfo | null>(null)
@@ -50,10 +112,11 @@ export function useServers() {
       const url = normalizeUrl(rawUrl)
       if (!url) return null
       const entry: ServerEntry = { id: entryId(url), url, apiKey: apiKey || undefined }
+      if (apiKey) writeApiKey(entry.id, apiKey)
       setServers((prev) => {
-        const existing = prev.find((s) => s.id === entry.id)
-        if (existing) return prev.map((s) => (s.id === entry.id ? { ...s, apiKey: entry.apiKey ?? s.apiKey } : s))
-        return [...prev, entry]
+        const existing = (Array.isArray(prev) ? prev : []).find((s) => s.id === entry.id)
+        if (existing) return prev
+        return [...(Array.isArray(prev) ? prev : []), { id: entry.id, url: entry.url }]
       })
       setActiveId(entry.id)
       return entry
@@ -63,7 +126,8 @@ export function useServers() {
 
   const removeServer = useCallback(
     (id: string) => {
-      setServers((prev) => prev.filter((s) => s.id !== id))
+      writeApiKey(id, undefined)
+      setServers((prev) => (Array.isArray(prev) ? prev.filter((s) => s.id !== id) : []))
       setActiveId((prev) => (prev === id ? null : prev))
     },
     [setServers, setActiveId],
@@ -79,7 +143,10 @@ export function useServers() {
         if (cancelled || !config.defaultServer) return
         const url = normalizeUrl(config.defaultServer)
         if (!url) return
-        setServers((prev) => (prev.some((s) => s.id === entryId(url)) ? prev : [...prev, { id: entryId(url), url }]))
+        setServers((prev) => {
+          const list = Array.isArray(prev) ? prev : []
+          return list.some((s) => s.id === entryId(url)) ? list : [...list, { id: entryId(url), url }]
+        })
         setActiveId((prev) => prev ?? entryId(url))
       } catch {
         // Running against a static host without the CLI; the user picks manually.

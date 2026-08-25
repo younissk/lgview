@@ -1,8 +1,21 @@
 /** React Flow node renderers. Status colour is the whole point of these. */
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import type { GraphNodeData } from '../lib/layout'
+import type { GraphNodeData, NodeStatus } from '../lib/layout'
+import { describeStatus } from '../lib/layout'
 import { formatDuration } from '../lib/format'
+
+/**
+ * Status is also carried as a glyph, not by colour alone. A protanope sees
+ * finished and failed at 1.12:1 against each other.
+ */
+const STATUS_GLYPH: Partial<Record<NodeStatus, string>> = {
+  done: '\u2713',
+  error: '\u2715',
+  interrupted: '\u23F8',
+  stopped: '\u25A0',
+  queued: '\u2026',
+}
 
 export const GraphNodeView = memo(function GraphNodeView({ data, selected, sourcePosition, targetPosition }: NodeProps) {
   const node = data as GraphNodeData
@@ -12,6 +25,12 @@ export const GraphNodeView = memo(function GraphNodeView({ data, selected, sourc
       <span className="gnode-label">{node.label}</span>
       <span className="gnode-meta">
         {node.status === 'running' && <span className="gnode-spinner" aria-hidden="true" />}
+        {STATUS_GLYPH[node.status] && (
+          <span className={`gnode-glyph gnode-glyph-${node.status}`} aria-hidden="true">
+            {STATUS_GLYPH[node.status]}
+          </span>
+        )}
+        <span className="sr-only">{describeStatus(node.status)}</span>
         {node.runs > 1 && <span className="gnode-badge">&times;{node.runs}</span>}
         {node.durationMs !== undefined && <span className="gnode-duration">{formatDuration(node.durationMs)}</span>}
       </span>

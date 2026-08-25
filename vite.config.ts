@@ -37,7 +37,10 @@ export default defineConfig({
   build: {
     outDir: '../dist/web',
     emptyOutDir: true,
-    sourcemap: true,
+    // No source map in the published bundle: at 1.5 MB it was 73% of the npm
+    // tarball, which every `npx lgview` pays for, to debug a tool whose source
+    // is one `git clone` away. `npm run dev` still has full maps.
+    sourcemap: false,
   },
   server: { port: 5173, strictPort: false },
 })

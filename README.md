@@ -48,12 +48,15 @@ npx lgview [options]
 
   -s, --server <url>   LangGraph server to connect to  (default http://127.0.0.1:2024)
   -p, --port <n>       Port to serve the UI on         (default 4141)
-      --host <host>    Interface to bind               (default 127.0.0.1)
       --api-key <key>  Sent upstream as x-api-key, for deployed servers
       --no-open        Do not open a browser
   -v, --version        Print version
   -h, --help           Show this help
 ```
+
+lgview always binds to `127.0.0.1`. There is no flag to expose it on a network
+interface: it has no authentication and it proxies to servers with your API key
+attached, so serving it to a network would make it an open relay.
 
 You can also add servers from inside the UI (**manage**), and switch between
 them without restarting. Anything that speaks the LangGraph server API works:
@@ -80,10 +83,35 @@ request header and the API key attached server-side.
 
 That is not a workaround for local CORS — `langgraph dev` is permissive. It is
 so that a deployed server behind a strict CORS policy works exactly like a
-local one, so API keys never have to live in browser storage, and so the dev
-server and the shipped binary run the same code path. The proxy refuses any
-request whose `Host` is not loopback or whose `Origin` is not its own, so a
-page you happen to have open elsewhere cannot use it to reach your network.
+local one, so the key is attached server-side rather than travelling with every
+request the page makes, and so the dev server and the shipped binary run the
+same code path.
+
+The proxy is the security boundary, and it is guarded by three checks: the
+request `Host` must be loopback, `Sec-Fetch-Site` must not say the request came
+from another site, and an `Origin`, if present, must be lgview's own. The
+middle one is load-bearing — browsers omit `Origin` entirely on `<img>`,
+`<script>` and `no-cors` GETs, so checking it alone would wave through exactly
+the cross-site requests an attacker gets for free. An API key is only ever sent
+to the origin it was configured for, and never over plaintext `http` to a
+non-loopback host.
+
+### Where your API key lives
+
+In `sessionStorage`, for the life of the tab, and in the lgview process. Not in
+`localStorage`, and never written to a file — a LangGraph Platform key unlocks
+every thread in a tenant, which is other people's conversations. Passing it as
+`--api-key` does put it in your shell history and in `ps` output, so prefer
+typing it into the UI.
+
+### Privacy
+
+lgview collects nothing. No telemetry, no analytics, no error reporting, no
+update check. The only host it ever contacts is the LangGraph server you point
+it at; the page loads no remote fonts, scripts, or images. Thread state and
+checkpoints — which routinely contain end-user conversations — are rendered in
+your browser and are never sent anywhere except back to the server they came
+from.
 
 ## What it deliberately does not do
 
@@ -102,10 +130,12 @@ page you happen to have open elsewhere cannot use it to reach your network.
 ```bash
 npm install
 npm run dev        # Vite dev server on :5173, same proxy as production
-npm test           # SSE decoding, run-event reduction, proxy guards
+npm test           # unit, integration, and component tests (Vitest)
 npm run typecheck
-npm run build      # dist/web + dist/cli.js
+npm run build      # third-party notices + dist/web + dist/cli.js
 ```
+
+Node 20 or newer, for both using and developing lgview.
 
 `LGVIEW_SERVER=http://localhost:8123 npm run dev` points the dev server
 somewhere other than the default.
@@ -140,10 +170,16 @@ upgrade should degrade gracefully rather than break.
 ## Roadmap
 
 - Editing state at a checkpoint before forking
-- Subgraph drill-down (`?xray=1` is already fetched but not yet rendered)
+- Subgraph drill-down (the API supports `?xray=1`; lgview does not request it yet)
+- Paging the thread list and checkpoint history, which are currently capped at 40
 - `pipx`/Homebrew distribution alongside npm
 - Click a node to open its source in your editor
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
+
+lgview ships as a pre-bundled package, so `dist/` contains compiled-in code
+from React, React Flow, dagre and their dependencies. Their licences are
+reproduced in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is
+generated during the build and included in the npm tarball.

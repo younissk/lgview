@@ -62,34 +62,44 @@ test('a data line with no space after the colon keeps every character', () => {
 /**
  * Guards the shape of the cost, not a wall-clock number.
  *
- * The decoder was quadratic: it re-normalised and re-scanned everything
- * received on every socket chunk. LangGraph re-sends the whole graph state
- * each superstep, so a run carrying a 20 MB state blocked the main thread for
- * ~15 s per step. Comparing per-megabyte cost at two sizes catches a
- * regression without pinning a number that varies by machine.
+ * The decoder was quadratic: it appended every socket chunk to one growing
+ * string and re-scanned it from the start. LangGraph re-sends the whole graph
+ * state each superstep, so a run carrying a 20 MB state blocked the main
+ * thread for ~15 s per step.
+ *
+ * Timing on a shared CI box is noisy, so this takes the best of three runs at
+ * each size -- the minimum is the least contaminated by scheduling -- and
+ * compares cost per megabyte across a 16x size range. Linear keeps that ratio
+ * near 1; the old implementation showed roughly 16x. The threshold sits far
+ * from both.
  */
 test('decoding cost stays proportional to the payload, not its square', () => {
-  const feed = (megabytes) => {
+  const measure = (megabytes) => {
     const frame = `event: values\ndata: ${JSON.stringify({ draft: 'x'.repeat(megabytes * 1024 * 1024) })}\n\n`
-    const decoder = new SseDecoder()
     const chunk = 16 * 1024
-    const started = performance.now()
+    let best = Infinity
     let events = 0
-    for (let i = 0; i < frame.length; i += chunk) {
-      events += decoder.push(frame.slice(i, i + chunk)).length
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const decoder = new SseDecoder()
+      const started = performance.now()
+      events = 0
+      for (let i = 0; i < frame.length; i += chunk) {
+        events += decoder.push(frame.slice(i, i + chunk)).length
+      }
+      best = Math.min(best, performance.now() - started)
     }
-    return { perMb: (performance.now() - started) / megabytes, events }
+    return { perMb: best / megabytes, events }
   }
 
-  const small = feed(1)
-  const large = feed(8)
+  const small = measure(1)
+  const large = measure(16)
   assert.equal(small.events, 1)
   assert.equal(large.events, 1)
 
-  // Linear means per-megabyte cost is flat. Quadratic showed an 8x rise here;
-  // 4x leaves generous headroom for a noisy CI box.
+  const ratio = large.perMb / small.perMb
   assert.ok(
-    large.perMb < small.perMb * 4 + 5,
-    `per-MB cost grew from ${small.perMb.toFixed(1)}ms to ${large.perMb.toFixed(1)}ms — decoder may be quadratic again`,
+    ratio < 6,
+    `per-MB cost grew ${ratio.toFixed(1)}x across a 16x size range ` +
+      `(${small.perMb.toFixed(1)} -> ${large.perMb.toFixed(1)} ms/MB) — the decoder may be quadratic again`,
   )
 })

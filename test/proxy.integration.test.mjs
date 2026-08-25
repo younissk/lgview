@@ -208,23 +208,35 @@ test('streams SSE through without buffering it into one chunk', async () => {
 })
 
 test('a dead upstream becomes a 502 that names the real reason', async () => {
-  // A closed high port, not a reserved one: fetch rejects ports like 1 with
-  // "bad port" before it ever tries to connect.
-  const res = await lg('/ok', { headers: { 'x-lgview-upstream': 'http://127.0.0.1:45999' } })
+  // Claim a port, then release it, so this is a port nothing is listening on
+  // rather than a number that happened to be free when the test was written.
+  // (Not a reserved port either: fetch rejects those with "bad port" before it
+  // ever tries to connect, which would test nothing.)
+  const probe = createServer(() => {})
+  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const deadPort = probe.address().port
+  await new Promise((resolve) => probe.close(resolve))
+
+  const res = await lg('/ok', { headers: { 'x-lgview-upstream': `http://127.0.0.1:${deadPort}` } })
   assert.equal(res.status, 502)
   const body = await res.json()
   assert.equal(body.error, 'lgview_proxy_error')
-  assert.ok(body.target.startsWith('http://127.0.0.1:45999/'))
+  assert.ok(body.target.startsWith(`http://127.0.0.1:${deadPort}/`))
   // "fetch failed" tells a user nothing; the nested errno has to survive.
-  assert.match(body.message, /nothing is listening on http:\/\/127\.0\.0\.1:45999/)
+  assert.match(body.message, new RegExp(`nothing is listening on http://127\\.0\\.0\\.1:${deadPort}`))
 })
 
-test('an unresolvable host is reported as a name-resolution failure', async () => {
+test('an unreachable host is reported with a real reason, not "fetch failed"', async () => {
   const res = await lg('/ok', {
     headers: { 'x-lgview-upstream': 'http://lgview-nonexistent.invalid' },
   })
   assert.equal(res.status, 502)
-  assert.match((await res.json()).message, /could not resolve/)
+  const { message } = await res.json()
+  // Some networks run a DNS hijacker that answers for .invalid, so this can
+  // legitimately surface as a resolution failure OR a connection failure. What
+  // must never appear is undici's bare "fetch failed" with no cause.
+  assert.match(message, /could not resolve|nothing is listening|timed out connecting/)
+  assert.doesNotMatch(message, /^fetch failed reaching/)
 })
 
 test('an unusable upstream url is a 400, not a crash', async () => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { GraphCanvas } from './components/GraphCanvas'
 import { Inspector } from './components/Inspector'
 import { RunPanel } from './components/RunPanel'
+import { RunStatusAnnouncer } from './components/RunStatusAnnouncer'
 import { ServerDialog } from './components/ServerDialog'
 import { ThreadList } from './components/ThreadList'
 import { TopBar } from './components/TopBar'
@@ -133,6 +134,8 @@ export default function App() {
           </button>
         </div>
       )}
+
+      <RunStatusAnnouncer run={runner.run} />
 
       <main className="layout">
         <div className="sidebar">

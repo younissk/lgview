@@ -5,8 +5,8 @@ tractable in an afternoon.
 
 ## Getting set up
 
-You need **Node 22 or newer** to develop (see [A note on Node versions](#a-note-on-node-versions)),
-and Python 3.10+ if you want to run the demo agent.
+You need **Node 20 or newer**, and Python 3.10+ if you want to run the demo
+agent.
 
 ```bash
 git clone https://github.com/younissk/lgview
@@ -47,18 +47,12 @@ npm test            # unit + integration
 npm run build       # dist/web + dist/cli.js
 ```
 
-CI runs all three on Node 22 and 24, then packs the tarball and runs the
+CI runs all three on Node 20, 22 and 24, then packs the tarball and runs the
 installed binary. A change is ready when those pass.
 
-## A note on Node versions
-
-`engines` says Node ≥20 and that is correct for **users** — the published
-package is pre-bundled JavaScript with no dependencies.
-
-**Contributors need Node ≥22.** The test files import TypeScript directly and
-rely on the runtime's type stripping, which landed in Node 22.6 and was never
-backported to 20.x. If `npm test` fails with a syntax error on a `.ts` import,
-that is why.
+Tests run on Vitest. `test/` holds unit and integration tests for the CLI and
+the API layer; component tests live next to the component, as
+`Thing.test.tsx`.
 
 ## How the pieces fit
 

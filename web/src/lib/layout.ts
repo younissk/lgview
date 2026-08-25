@@ -33,6 +33,26 @@ const TERMINAL_HEIGHT = 34
 const CHAR_WIDTH = 7.6
 const LABEL_PADDING = 44
 
+/** Plain-language status, for screen readers and for the node's own badge. */
+export function describeStatus(status: NodeStatus): string {
+  switch (status) {
+    case 'queued':
+      return 'queued'
+    case 'running':
+      return 'running'
+    case 'done':
+      return 'finished'
+    case 'error':
+      return 'failed'
+    case 'interrupted':
+      return 'waiting for input'
+    case 'stopped':
+      return 'stopped before finishing'
+    default:
+      return 'not run'
+  }
+}
+
 export function isTerminal(id: string): boolean {
   return id === START_NODE || id === END_NODE
 }
@@ -111,6 +131,9 @@ export function layoutGraph(
         x: Math.round((positioned?.x ?? 0) - size.width / 2),
         y: Math.round((positioned?.y ?? 0) - size.height / 2),
       },
+      // Announced to assistive technology; React Flow renders nodes as bare
+      // divs with no accessible name of their own.
+      ariaLabel: `${labels.get(node.id) ?? node.id}, ${describeStatus(statuses[node.id] ?? 'idle')}`,
       data: {
         label: labels.get(node.id) ?? node.id,
         status: statuses[node.id] ?? 'idle',
