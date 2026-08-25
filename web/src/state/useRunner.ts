@@ -117,12 +117,23 @@ export function useRunner(
     const runId = runIdRef.current
     const target = threadIdRef.current
     controller?.abort()
-    // Aborting only drops our end of the stream; the run keeps going until the
-    // server is told to stop.
+
+    // Aborting only drops our end of the stream; the run keeps going server-side
+    // until it is told to stop. If that request fails the user needs to know --
+    // swallowing it made "cancelled" a claim rather than a fact.
+    let error: string | undefined
     if (connection && target && runId) {
-      await api.cancelRun(connection, target, runId).catch(() => undefined)
+      try {
+        await api.cancelRun(connection, target, runId)
+      } catch (err) {
+        error = `stopped watching, but the server did not confirm the cancel: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      }
+    } else if (!runId) {
+      error = 'stopped watching, but no run id was known so the server was not asked to stop'
     }
-    dispatch({ type: 'finish', status: 'cancelled', at: Date.now() })
+    dispatch({ type: 'finish', status: 'cancelled', at: Date.now(), error })
   }, [connection?.url, connection?.apiKey])
 
   const hydrate = useCallback(

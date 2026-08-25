@@ -1,8 +1,22 @@
-import { test } from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import { initialRunState, runReducer, MAX_LOG_ENTRIES } from '../web/src/state/runReducer.ts'
 
-/** Payload shapes below are copied from a real langgraph-api 0.13.0 stream. */
+/**
+ * Payloads are captured from a live langgraph-api 0.13.0 stream, not invented.
+ *
+ * This matters more than it sounds. An earlier version of this file made up a
+ * `task_result` carrying `error: 'boom'` to test the failure path. The server
+ * never emits that shape -- a real node crash arrives as a top-level
+ * `event: error` frame with no `task` and no `task_result` at all -- so the
+ * branch under test was unreachable in production and a crashed run rendered
+ * as a success with the failed node coloured green. Capture, do not imagine:
+ *
+ *   TID=$(curl -s -X POST localhost:2024/threads -H 'content-type: application/json' -d '{}' \
+ *     | python3 -c "import sys,json;print(json.load(sys.stdin)['thread_id'])")
+ *   curl -N -X POST "localhost:2024/threads/$TID/runs/stream" -H 'content-type: application/json' \
+ *     -d '{"assistant_id":"writer","input":{"notes":"oops"},"stream_mode":["values","updates","debug"]}'
+ */
 const feed = (events, state = initialRunState) =>
   events.reduce((acc, event, index) => runReducer(acc, { type: 'event', event, at: 1000 + index * 100 }), state)
 
@@ -27,7 +41,37 @@ test('debug task events drive node status and duration', () => {
   assert.equal(state.durations.plan, 100)
 })
 
-test('a failed task shows as an error, not as done', () => {
+test('a real node crash marks the run failed, not done', () => {
+  // Exactly what the server sent for a TypeError inside a reducer: a debug
+  // checkpoint, then a bare `error` frame. No task_result anywhere.
+  const crashed = feed(
+    [
+      { event: 'metadata', data: { run_id: 'r1', attempt: 1 } },
+      { event: 'debug', data: { type: 'checkpoint', step: -1, payload: { next: ['__start__'] } } },
+      { event: 'error', data: { error: 'TypeError', message: 'can only concatenate list (not "str") to list' } },
+    ],
+    started(),
+  )
+  assert.equal(crashed.status, 'error')
+  assert.match(crashed.error, /can only concatenate list/)
+
+  // The stream then simply ends. Ending is not evidence of success.
+  const settled = runReducer(crashed, { type: 'finish', status: 'done', at: 9999 })
+  assert.equal(settled.status, 'error', 'a crashed run must not report done')
+})
+
+test('an error frame marks whichever node was in flight as failed', () => {
+  const state = feed(
+    [
+      { event: 'debug', data: { type: 'task', step: 1, payload: { name: 'critique' } } },
+      { event: 'error', data: { error: 'ValueError', message: 'bad score' } },
+    ],
+    started(),
+  )
+  assert.equal(state.statuses.critique, 'error')
+})
+
+test('a task_result carrying an error is still handled, if one ever arrives', () => {
   const state = feed(
     [
       { event: 'debug', data: { type: 'task', step: 1, payload: { id: 't1', name: 'plan' } } },
@@ -37,6 +81,51 @@ test('a failed task shows as an error, not as done', () => {
   )
   assert.equal(state.statuses.plan, 'error')
   assert.equal(state.log.at(-1).isError, true)
+})
+
+test('cancelling does not paint the interrupted node as completed', () => {
+  const running = feed(
+    [
+      { event: 'debug', data: { type: 'task', step: 1, payload: { name: 'write_draft' } } },
+      { event: 'debug', data: { type: 'checkpoint', step: 1, payload: { next: ['critique'] } } },
+    ],
+    started(),
+  )
+  const cancelled = runReducer(running, { type: 'finish', status: 'cancelled', at: 9999 })
+  assert.equal(cancelled.status, 'cancelled')
+  assert.equal(cancelled.statuses.write_draft, 'stopped', 'a cancelled node did not finish')
+  assert.equal(cancelled.statuses.critique, 'stopped')
+})
+
+test('resuming an interrupt keeps the colouring of nodes that already ran', () => {
+  const parked = feed(
+    [
+      { event: 'debug', data: { type: 'task', step: 1, payload: { name: 'prepare' } } },
+      { event: 'debug', data: { type: 'task_result', step: 1, payload: { name: 'prepare', error: null } } },
+      { event: 'updates', data: { __interrupt__: [{ value: { question: 'ok?' }, id: 'i1' }] } },
+    ],
+    started(),
+  )
+  assert.equal(parked.statuses.prepare, 'done')
+
+  const resumed = runReducer(parked, { type: 'start', at: 5000, resume: true })
+  assert.equal(resumed.statuses.prepare, 'done', 'resuming must not blank the canvas')
+  assert.equal(resumed.durations.prepare, parked.durations.prepare)
+
+  // A fresh run, by contrast, starts from nothing.
+  const fresh = runReducer(parked, { type: 'start', at: 5000, resume: false })
+  assert.deepEqual(fresh.statuses, {})
+})
+
+test('an ordinary node update does not discard a pending interrupt', () => {
+  const parked = feed(
+    [{ event: 'updates', data: { __interrupt__: [{ value: { question: 'ok?' }, id: 'i1' }] } }],
+    started(),
+  )
+  // A second graph in the same thread emitting an unrelated update used to null
+  // the interrupt, losing the Resume card with no way back in-session.
+  const later = feed([{ event: 'updates', data: { some_other_node: { ok: true } } }], parked)
+  assert.notEqual(later.interrupt, null)
 })
 
 test('checkpoint next[] queues upcoming nodes without demoting a running one', () => {
@@ -83,13 +172,20 @@ test('an __interrupt__ update parks the run and surfaces the payload', () => {
   assert.equal(state.statuses.prepare, 'done')
 })
 
-test('resuming past an interrupt clears it', () => {
+test('starting the resume run is what clears the interrupt', () => {
   const interrupted = feed(
     [{ event: 'updates', data: { __interrupt__: [{ value: { question: 'q?' } }] } }],
     started(),
   )
-  const resumed = feed([{ event: 'updates', data: { ask_human: { decision: 'approve' } } }], interrupted)
+  assert.notEqual(interrupted.interrupt, null)
+
+  // Answering it dispatches a resume `start`; that is the moment the card goes.
+  const resuming = runReducer(interrupted, { type: 'start', at: 5000, resume: true })
+  assert.equal(resuming.interrupt, null)
+
+  const resumed = feed([{ event: 'updates', data: { ask_human: { decision: 'approve' } } }], resuming)
   assert.equal(resumed.interrupt, null)
+  assert.equal(resumed.statuses.ask_human, 'done')
 })
 
 test('subgraph-namespaced modes are treated as their base mode', () => {

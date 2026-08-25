@@ -39,18 +39,32 @@ export function useThreads(connection: Connection | null, graphId: string | null
     setHistory([])
   }, [graphId, connection?.url])
 
+  /**
+   * Load a thread's current state and checkpoint history.
+   *
+   * `signal` matters: without it, switching threads quickly could land the
+   * slower response last and show thread A's state under thread B's label. So
+   * could a failure -- the old code left the previous thread's values,
+   * checkpoints and node colours on screen when the fetch threw, which is how
+   * restarting `langgraph dev` from a different project produced a UI
+   * confidently displaying data for a thread that no longer existed.
+   */
   const loadState = useCallback(
-    async (id: string) => {
+    async (id: string, signal?: AbortSignal) => {
       if (!connection) return
       try {
         const [current, past] = await Promise.all([
           api.threadState(connection, id),
           api.threadHistory(connection, id, 40).catch(() => [] as ThreadState[]),
         ])
+        if (signal?.aborted) return
         setState(current)
         setHistory(past)
         setError(null)
       } catch (err) {
+        if (signal?.aborted) return
+        setState(null)
+        setHistory([])
         setError(err instanceof Error ? err.message : 'could not load the thread')
       }
     },
@@ -58,7 +72,10 @@ export function useThreads(connection: Connection | null, graphId: string | null
   )
 
   useEffect(() => {
-    if (threadId) void loadState(threadId)
+    if (!threadId) return
+    const controller = new AbortController()
+    void loadState(threadId, controller.signal)
+    return () => controller.abort()
   }, [threadId, loadState])
 
   const createThread = useCallback(
@@ -104,5 +121,6 @@ export function useThreads(connection: Connection | null, graphId: string | null
     deleteThread,
     refreshThreads,
     reloadState: useCallback(() => (threadId ? loadState(threadId) : Promise.resolve()), [threadId, loadState]),
+    clearError: useCallback(() => setError(null), []),
   }
 }

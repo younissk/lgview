@@ -1,4 +1,4 @@
-import { test, before, after } from 'node:test'
+import { test, beforeAll, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
@@ -11,7 +11,7 @@ let server
 let base
 let root
 
-before(async () => {
+beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'lgview-static-'))
   await mkdir(join(root, 'assets'), { recursive: true })
   await writeFile(join(root, 'index.html'), '<!doctype html><title>shell</title>')
@@ -27,7 +27,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`
 })
 
-after(() => server?.close())
+afterAll(() => server?.close())
 
 test('serves the shell at the root', async () => {
   const res = await fetch(`${base}/`)

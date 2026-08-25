@@ -64,6 +64,12 @@ export default function App() {
     async (input: Record<string, unknown> | null) => {
       const threadId = threads.threadId ?? (await threads.createThread({ graph_id: graphId ?? undefined }))
       if (!threadId) return
+      // Claim the thread before starting. The "clean slate on thread change"
+      // effect below runs on the very next render, and without this it reset
+      // the run we just started -- so the first run of every session dropped to
+      // `idle` mid-flight, Cancel reverted to Run, and a second click launched
+      // a duplicate.
+      lastThread.current = threadId
       await runner.start({ input, threadId })
     },
     [threads.threadId, threads.createThread, graphId, runner.start],
@@ -76,17 +82,19 @@ export default function App() {
     [runner.start],
   )
 
-  // Cmd/Ctrl+Enter runs, from anywhere.
+  // Cmd/Ctrl+Enter runs, from anywhere -- except while the graph is parked on
+  // an interrupt, where "run" would restart it from START rather than resume.
+  const parked = Boolean(runner.run.interrupt) && !runner.isActive
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !runner.isActive) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !runner.isActive && !parked) {
         const button = document.querySelector<HTMLButtonElement>('.run-actions .btn-primary')
         button?.click()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [runner.isActive])
+  }, [runner.isActive, parked])
 
   const offline = servers.status === 'offline'
 
@@ -133,6 +141,7 @@ export default function App() {
             run={runner.run}
             isActive={runner.isActive}
             hasThread={Boolean(threads.threadId)}
+            parked={parked}
             disabled={!assistants.selected || offline}
             onRun={(input) => void handleRun(input)}
             onResume={(value) => void runner.resume(value)}
@@ -144,6 +153,7 @@ export default function App() {
             activeId={threads.threadId}
             onSelect={threads.selectThread}
             onDelete={(id) => void threads.deleteThread(id)}
+            error={threads.error}
             onRefresh={threads.refreshThreads}
           />
         </div>
@@ -174,6 +184,7 @@ export default function App() {
           schemas={assistants.schemas}
           selectedNode={selectedNode}
           activeCheckpointId={threads.state?.checkpoint_id ?? null}
+          canFork={Boolean(threads.threadId) && !runner.isActive}
           onForkFrom={handleFork}
         />
       </main>

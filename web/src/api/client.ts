@@ -28,11 +28,24 @@ export interface Connection {
 export class ApiError extends Error {
   readonly status: number
   readonly body?: unknown
-  constructor(status: number, message: string, body?: unknown) {
+  /** Whether lgview's proxy failed, or the LangGraph server rejected us. */
+  readonly source: 'proxy' | 'upstream'
+  constructor(status: number, message: string, body?: unknown, source: 'proxy' | 'upstream' = 'upstream') {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.body = body
+    this.source = source
+  }
+
+  /** True when the server answered but refused us -- bad key, no permission. */
+  get isAuthFailure(): boolean {
+    return this.source === 'upstream' && (this.status === 401 || this.status === 403)
+  }
+
+  /** True when we never got a usable answer from the LangGraph server at all. */
+  get isUnreachable(): boolean {
+    return this.source === 'proxy' && this.status >= 500
   }
 }
 
@@ -52,23 +65,48 @@ async function request<T>(conn: Connection, path: string, init: RequestInit = {}
     }),
   })
   if (!response.ok) throw await toApiError(response)
-  if (response.status === 204) return undefined as T
-  return (await response.json()) as T
+  // Not every success carries JSON. Cancel answers 202 with an empty body, and
+  // calling .json() on it threw on every *successful* cancel -- which the
+  // caller's catch then swallowed, so a 202, a 404 and a request that was never
+  // sent all looked identical.
+  return (await readBody(response)) as T
+}
+
+async function readBody(response: Response): Promise<unknown> {
+  if (response.status === 204 || response.status === 205) return undefined
+  const text = await response.text()
+  if (text.trim() === '') return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
 }
 
 async function toApiError(response: Response): Promise<ApiError> {
   const text = await response.text().catch(() => '')
   let body: unknown = text
   let message = text
+  let fromProxy = false
   try {
     body = JSON.parse(text)
-    const detail = (body as { detail?: unknown; message?: unknown })?.detail ?? (body as { message?: unknown })?.message
+    const record = body as { error?: unknown; detail?: unknown; message?: unknown }
+    // Two envelopes reach here: ours from cli/proxy.ts, and whatever the
+    // LangGraph server sent. Collapsing them made a rejected API key render as
+    // "cannot reach the server -- start one with langgraph dev".
+    fromProxy = record?.error === 'lgview_proxy_error'
+    const detail = record?.detail ?? record?.message
     if (typeof detail === 'string') message = detail
     else if (detail) message = JSON.stringify(detail)
   } catch {
     // Leave the raw text as the message.
   }
-  return new ApiError(response.status, message || `${response.status} ${response.statusText}`, body)
+  return new ApiError(
+    response.status,
+    message || `${response.status} ${response.statusText}`,
+    body,
+    fromProxy ? 'proxy' : 'upstream',
+  )
 }
 
 const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(value) })
@@ -135,6 +173,7 @@ export const api = {
     return request<ThreadState[]>(conn, `/threads/${encodeURIComponent(threadId)}/history`, json({ limit }))
   },
 
+  /** Ask the server to stop a run. Answers 202 with an empty body on success. */
   cancelRun(conn: Connection, threadId: string, runId: string): Promise<void> {
     return request<void>(
       conn,

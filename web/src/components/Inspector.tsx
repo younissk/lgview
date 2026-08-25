@@ -15,6 +15,8 @@ export interface InspectorProps {
   schemas: AssistantSchemas | null
   selectedNode: string | null
   activeCheckpointId: string | null
+  /** False when there is no thread to fork, or a run is already in flight. */
+  canFork: boolean
   onForkFrom: (checkpointId: string) => void
 }
 
@@ -25,6 +27,7 @@ export function Inspector({
   schemas,
   selectedNode,
   activeCheckpointId,
+  canFork,
   onForkFrom,
 }: InspectorProps) {
   const [tab, setTab] = useState<Tab>('state')
@@ -57,7 +60,12 @@ export function Inspector({
         )}
         {tab === 'events' && <EventsTab log={run.log} />}
         {tab === 'history' && (
-          <HistoryTab history={history} activeCheckpointId={activeCheckpointId} onForkFrom={onForkFrom} />
+          <HistoryTab
+            history={history}
+            activeCheckpointId={activeCheckpointId}
+            canFork={canFork}
+            onForkFrom={onForkFrom}
+          />
         )}
         {tab === 'schema' && <SchemaTab schemas={schemas} />}
       </div>
@@ -145,9 +153,18 @@ function EventRow({ entry }: { entry: LogEntry }) {
   const expandable = entry.payload !== undefined && entry.payload !== null
   return (
     <li className={`event event-${entry.kind}${entry.isError ? ' is-error' : ''}`}>
-      <button type="button" className="event-head" onClick={() => expandable && setOpen((prev) => !prev)}>
+      <button
+        type="button"
+        className="event-head"
+        aria-expanded={expandable ? open : undefined}
+        onClick={() => expandable && setOpen((prev) => !prev)}
+      >
         <span className="event-time mono">{formatClock(entry.at)}</span>
-        <span className="event-kind">{KIND_GLYPH[entry.kind]}</span>
+        {/* A failed node must not wear a checkmark. */}
+        <span className="event-kind" aria-hidden="true">
+          {entry.isError ? '\u2715' : KIND_GLYPH[entry.kind]}
+        </span>
+        <span className="sr-only">{entry.isError ? 'failed' : entry.kind.replace('-', ' ')}</span>
         <span className="event-label">{entry.label}</span>
         {entry.durationMs !== undefined && <span className="event-duration">{formatDuration(entry.durationMs)}</span>}
         {expandable && !open && <span className="event-preview">{summarize(entry.payload, 40)}</span>}
@@ -176,10 +193,13 @@ const KIND_GLYPH: Record<LogEntry['kind'], string> = {
 function HistoryTab({
   history,
   activeCheckpointId,
+  canFork,
   onForkFrom,
 }: {
   history: ThreadState[]
   activeCheckpointId: string | null
+  /** False when there is no thread to fork, or a run is already in flight. */
+  canFork: boolean
   onForkFrom: (checkpointId: string) => void
 }) {
   if (history.length === 0) {
@@ -211,7 +231,13 @@ function HistoryTab({
               {entry.interrupts.length > 0 && <span className="chip chip-sm chip-warn">interrupt</span>}
             </div>
             <div className="checkpoint-actions">
-              <button type="button" className="link-btn" onClick={() => onForkFrom(id)} disabled={!id}>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => onForkFrom(id)}
+                disabled={!id || !canFork}
+                title={canFork ? 'Re-run the graph from this checkpoint' : 'Select a thread first'}
+              >
                 resume from here
               </button>
             </div>

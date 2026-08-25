@@ -85,23 +85,31 @@ export function runReducer(state: RunState, action: RunAction): RunState {
         nextId: state.nextId,
         status: 'starting',
         startedAt: action.at,
-        // Resuming continues the same thread, so the values already on screen
-        // stay until the server sends fresher ones.
+        // Resuming continues the same thread, so everything already on screen
+        // stays until the server sends fresher information. Dropping statuses
+        // here used to blank the canvas the moment you answered an interrupt.
         values: action.resume ? state.values : null,
         log: action.resume ? state.log.slice(-MAX_LOG_ENTRIES) : [],
         runCounts: action.resume ? state.runCounts : {},
+        statuses: action.resume ? state.statuses : {},
+        durations: action.resume ? state.durations : {},
+        nodeStartedAt: action.resume ? state.nodeStartedAt : {},
       }
 
-    case 'finish':
+    case 'finish': {
+      // The stream ending is not evidence that the run succeeded. If the server
+      // already told us the run was interrupted or failed, that verdict stands
+      // -- reporting "done" over the top of an `event: error` is how a crashed
+      // run came to render green.
+      const settled = TERMINAL_STATUSES.has(state.status) && action.status === 'done' ? state.status : action.status
       return {
         ...state,
-        // A stream that ends at an interrupt has not finished -- the graph is
-        // parked waiting for a human, and saying "done" would be a lie.
-        status: state.status === 'interrupted' && action.status === 'done' ? 'interrupted' : action.status,
+        status: settled,
         error: action.error ?? state.error,
         finishedAt: action.at,
-        statuses: clearTransientStatuses(state.statuses),
+        statuses: clearTransientStatuses(state.statuses, settled),
       }
+    }
 
     case 'hydrate':
       return {
@@ -120,11 +128,26 @@ export function runReducer(state: RunState, action: RunAction): RunState {
   }
 }
 
-/** A run that ends leaves no node mid-flight. Parked and failed nodes stay. */
-function clearTransientStatuses(statuses: Record<string, NodeStatus>): Record<string, NodeStatus> {
+const TERMINAL_STATUSES = new Set<RunStatus>(['interrupted', 'error'])
+
+/**
+ * A run that ends leaves no node mid-flight -- but only a *successful* finish
+ * means the node completed. Cancelling or failing mid-node must not paint it
+ * green; the node stopped, it did not finish.
+ */
+function clearTransientStatuses(
+  statuses: Record<string, NodeStatus>,
+  outcome: RunStatus,
+): Record<string, NodeStatus> {
   const next: Record<string, NodeStatus> = {}
   for (const [node, status] of Object.entries(statuses)) {
-    next[node] = status === 'running' || status === 'queued' ? 'done' : status
+    if (status !== 'running' && status !== 'queued') {
+      next[node] = status
+      continue
+    }
+    if (outcome === 'done') next[node] = 'done'
+    else if (outcome === 'error' && status === 'running') next[node] = 'error'
+    else next[node] = 'stopped'
   }
   return next
 }
@@ -166,8 +189,14 @@ function applyEvent(state: RunState, event: StreamEvent, at: number): RunState {
     }
 
     case 'error': {
+      // A real langgraph-api crash arrives as a top-level `error` frame with no
+      // `task_result` at all, so the node never leaves `running` on its own.
       const message = describeError(event.data)
-      return log({ ...state, status: 'error', error: message }, at, {
+      const statuses = { ...state.statuses }
+      for (const [node, status] of Object.entries(statuses)) {
+        if (status === 'running') statuses[node] = 'error'
+      }
+      return log({ ...state, statuses, status: 'error', error: message }, at, {
         kind: 'error',
         label: message,
         payload: event.data,
@@ -260,8 +289,11 @@ function applyUpdates(state: RunState, data: unknown, at: number): RunState {
       continue
     }
     // `updates` alone is enough to drive node status when `debug` is off.
+    // Note this does NOT clear `interrupt`: a resume emits the resumed node's
+    // update before anything else, and clearing here dropped the Resume card
+    // with no way to get it back in-session.
     const statuses = next.statuses[key] === 'running' ? next.statuses : { ...next.statuses, [key]: 'done' as NodeStatus }
-    next = log({ ...next, statuses, interrupt: null }, at, {
+    next = log({ ...next, statuses }, at, {
       kind: 'update',
       label: key,
       node: key,

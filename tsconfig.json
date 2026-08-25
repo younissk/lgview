@@ -15,7 +15,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node", "vite/client"]
+    "types": ["node", "vite/client", "@testing-library/jest-dom"]
   },
-  "include": ["web/src", "cli", "scripts", "vite.config.ts"]
+  "include": ["web/src", "cli", "scripts", "test", "vite.config.ts", "vitest.config.ts"]
 }

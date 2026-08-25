@@ -10,6 +10,8 @@ export interface RunPanelProps {
   run: RunState
   isActive: boolean
   hasThread: boolean
+  /** The graph is waiting on an interrupt; starting a run would restart it. */
+  parked: boolean
   disabled: boolean
   onRun: (input: Record<string, unknown> | null) => void
   onResume: (value: unknown) => void
@@ -22,6 +24,7 @@ export function RunPanel({
   run,
   isActive,
   hasThread,
+  parked,
   disabled,
   onRun,
   onResume,
@@ -44,7 +47,9 @@ export function RunPanel({
   const hints = useMemo(() => schemaFieldHints(schemas?.input_schema), [schemas?.input_schema])
 
   const parsed = useMemo(() => parseInput(text), [text])
-  const canRun = !disabled && !isActive && parsed.ok
+  // Running while parked would start the graph again from START rather than
+  // resuming it -- which silently discarded the interrupt and re-ran every node.
+  const canRun = !disabled && !isActive && !parked && parsed.ok
 
   return (
     <section className="panel run-panel">
@@ -57,8 +62,11 @@ export function RunPanel({
         </div>
       </header>
 
-      <label className="field-label" htmlFor="run-input">
-        Input
+      {/* The template button sits beside the label, not inside it: nesting a
+          button in a <label> folds its text into the field's accessible name,
+          so the textarea announced as "Input template". */}
+      <div className="field-label">
+        <label htmlFor="run-input">Input</label>
         <button
           type="button"
           className="link-btn"
@@ -71,7 +79,7 @@ export function RunPanel({
         >
           template
         </button>
-      </label>
+      </div>
       <textarea
         id="run-input"
         className={`code-input${parsed.ok ? '' : ' is-invalid'}`}
@@ -110,13 +118,25 @@ export function RunPanel({
             Cancel run
           </button>
         ) : (
-          <button type="button" className="btn-primary" onClick={() => onRun(parsed.ok ? parsed.value : null)} disabled={!canRun}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => onRun(parsed.ok ? parsed.value : null)}
+            disabled={!canRun}
+            title={parked ? 'This thread is waiting on an interrupt — answer it below to continue' : undefined}
+          >
             {hasThread ? 'Run' : 'Run in a new thread'}
           </button>
         )}
         <RunStatusLine run={run} />
       </div>
 
+      {parked && (
+        <p className="field-hint-note">
+          Waiting on an interrupt. Answer it below to continue this thread — starting a run would begin the
+          graph again from the start.
+        </p>
+      )}
       {run.interrupt && !isActive && <InterruptCard interrupt={run.interrupt} onResume={onResume} />}
       {run.error && <p className="field-error run-error">{run.error}</p>}
     </section>

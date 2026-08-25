@@ -1,4 +1,4 @@
-import { test, before, after } from 'node:test'
+import { test, beforeAll, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { handleProxy } from '../cli/proxy.ts'
@@ -10,7 +10,7 @@ let proxyUrl
 /** Requests the fake LangGraph server saw, for asserting on what we forward. */
 const seen = []
 
-before(async () => {
+beforeAll(async () => {
   upstream = createServer((req, res) => {
     seen.push({ url: req.url, method: req.method, headers: req.headers })
 
@@ -70,7 +70,7 @@ before(async () => {
   proxyUrl = `http://127.0.0.1:${proxy.address().port}`
 })
 
-after(() => {
+afterAll(() => {
   proxy?.close()
   upstream?.close()
 })

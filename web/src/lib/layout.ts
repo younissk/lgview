@@ -13,7 +13,7 @@ import type { GraphEdgeJson, GraphJson, GraphNodeJson } from '../api/types'
 export const START_NODE = '__start__'
 export const END_NODE = '__end__'
 
-export type NodeStatus = 'idle' | 'queued' | 'running' | 'done' | 'error' | 'interrupted'
+export type NodeStatus = 'idle' | 'queued' | 'running' | 'done' | 'error' | 'interrupted' | 'stopped'
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string
@@ -120,8 +120,13 @@ export function layoutGraph(
       },
       sourcePosition,
       targetPosition,
-      width: size.width,
-      height: size.height,
+      // `initialWidth`/`initialHeight` rather than `width`/`height`: the latter
+      // makes the node *controlled*, so React Flow stops measuring it, never
+      // reports it initialised, and every fitView call silently becomes a
+      // no-op. Dagre still gets the real sizes above; these are only a hint so
+      // the first paint is not zero-sized.
+      initialWidth: size.width,
+      initialHeight: size.height,
       draggable: true,
       selectable: true,
     }
