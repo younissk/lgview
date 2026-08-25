@@ -20,7 +20,12 @@ export interface Runner {
   resume: (value: unknown) => Promise<void>
   cancel: () => Promise<void>
   reset: () => void
-  hydrate: (values: Record<string, unknown> | null, interrupt: Interrupt | null, next: string[]) => void
+  hydrate: (
+    values: Record<string, unknown> | null,
+    interrupt: Interrupt | null,
+    next: string[],
+    ran?: string[],
+  ) => void
 }
 
 const STREAM_MODES: RunCreate['stream_mode'] = ['values', 'updates', 'debug', 'messages-tuple']
@@ -172,8 +177,8 @@ export function useRunner(
   }, [connection?.url, connection?.apiKey])
 
   const hydrate = useCallback(
-    (values: Record<string, unknown> | null, interrupt: Interrupt | null, next: string[]) => {
-      dispatch({ type: 'hydrate', values, interrupt, next })
+    (values: Record<string, unknown> | null, interrupt: Interrupt | null, next: string[], ran?: string[]) => {
+      dispatch({ type: 'hydrate', values, interrupt, next, ran })
     },
     [],
   )

@@ -84,7 +84,14 @@ export type RunAction =
   | { type: 'event'; event: StreamEvent; at: number }
   | { type: 'events'; events: Array<{ event: StreamEvent; at: number }> }
   | { type: 'finish'; status: RunStatus; at: number; error?: string }
-  | { type: 'hydrate'; values: Record<string, unknown> | null; interrupt: Interrupt | null; next: string[] }
+  | {
+      type: 'hydrate'
+      values: Record<string, unknown> | null
+      interrupt: Interrupt | null
+      next: string[]
+      /** Nodes known to have run, oldest first, reconstructed from checkpoints. */
+      ran?: string[]
+    }
   | { type: 'reset' }
 
 export function runReducer(state: RunState, action: RunAction): RunState {
@@ -124,17 +131,27 @@ export function runReducer(state: RunState, action: RunAction): RunState {
       }
     }
 
-    case 'hydrate':
+    case 'hydrate': {
+      // Reopening a thread used to blank the canvas, even though the server's
+      // checkpoint history says exactly which nodes ran and how many times.
+      const statuses: Record<string, NodeStatus> = {}
+      const runCounts: Record<string, number> = {}
+      for (const node of action.ran ?? []) {
+        statuses[node] = 'done'
+        runCounts[node] = (runCounts[node] ?? 0) + 1
+      }
+      for (const node of action.next) {
+        statuses[node] = action.interrupt ? 'interrupted' : 'queued'
+      }
       return {
         ...state,
         values: action.values,
         interrupt: action.interrupt,
-        statuses: action.next.reduce<Record<string, NodeStatus>>(
-          (acc, name) => ({ ...acc, [name]: action.interrupt ? 'interrupted' : 'queued' }),
-          {},
-        ),
+        statuses,
+        runCounts,
         status: action.interrupt ? 'interrupted' : state.status === 'running' ? 'idle' : state.status,
       }
+    }
 
     case 'event':
       return applyEvent(state, action.event, action.at)

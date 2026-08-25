@@ -1,10 +1,17 @@
 /** Thread list, current thread state, and checkpoint history for time travel. */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, type Connection } from '../api/client'
 import type { Thread, ThreadState } from '../api/types'
 
+const THREAD_PAGE = 40
+const HISTORY_LIMIT = 100
+
 export function useThreads(connection: Connection | null, graphId: string | null) {
   const [threads, setThreads] = useState<Thread[]>([])
+  /** True when the server had at least one more thread than we asked for. */
+  const [hasMoreThreads, setHasMoreThreads] = useState(false)
+  const [historyTruncated, setHistoryTruncated] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [threadId, setThreadId] = useState<string | null>(null)
   const [state, setState] = useState<ThreadState | null>(null)
   const [history, setHistory] = useState<ThreadState[]>([])
@@ -21,8 +28,13 @@ export function useThreads(connection: Connection | null, graphId: string | null
     let cancelled = false
     void (async () => {
       try {
-        const found = await api.searchThreads(connection, { limit: 40, graphId: graphId ?? undefined })
-        if (!cancelled) setThreads(found)
+        // Ask for one more than we show, so "is there another page" is a fact
+        // rather than a guess. A full page used to just stop, and older threads
+        // were silently unreachable.
+        const found = await api.searchThreads(connection, { limit: THREAD_PAGE + 1, graphId: graphId ?? undefined })
+        if (cancelled) return
+        setHasMoreThreads(found.length > THREAD_PAGE)
+        setThreads(found.slice(0, THREAD_PAGE))
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'could not list threads')
       }
@@ -31,6 +43,24 @@ export function useThreads(connection: Connection | null, graphId: string | null
       cancelled = true
     }
   }, [connection?.url, connection?.apiKey, graphId, nonce])
+
+  const loadMoreThreads = useCallback(async () => {
+    if (!connection || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const next = await api.searchThreads(connection, {
+        limit: THREAD_PAGE + 1,
+        offset: threads.length,
+        graphId: graphId ?? undefined,
+      })
+      setHasMoreThreads(next.length > THREAD_PAGE)
+      setThreads((prev) => [...prev, ...next.slice(0, THREAD_PAGE)])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not load more threads')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [connection?.url, connection?.apiKey, graphId, threads.length, loadingMore])
 
   // Selecting a different graph should not leave a foreign thread selected.
   useEffect(() => {
@@ -55,16 +85,20 @@ export function useThreads(connection: Connection | null, graphId: string | null
       try {
         const [current, past] = await Promise.all([
           api.threadState(connection, id),
-          api.threadHistory(connection, id, 40).catch(() => [] as ThreadState[]),
+          api.threadHistory(connection, id, HISTORY_LIMIT).catch(() => [] as ThreadState[]),
         ])
         if (signal?.aborted) return
         setState(current)
         setHistory(past)
+        // A long run can have more checkpoints than this; say so rather than
+        // letting early-step time travel look impossible.
+        setHistoryTruncated(past.length >= HISTORY_LIMIT)
         setError(null)
       } catch (err) {
         if (signal?.aborted) return
         setState(null)
         setHistory([])
+        setHistoryTruncated(false)
         setError(err instanceof Error ? err.message : 'could not load the thread')
       }
     },
@@ -110,8 +144,31 @@ export function useThreads(connection: Connection | null, graphId: string | null
     [connection?.url, connection?.apiKey, refreshThreads],
   )
 
+  /**
+   * Every node that executed in this thread, oldest first.
+   *
+   * A checkpoint records the tasks that were pending when it was written, so
+   * walking the history from the oldest entry forward reconstructs the order
+   * nodes ran in -- and how many times, which is what puts the loop counts back
+   * on the canvas when you reopen a thread.
+   */
+  const nodesThatRan = useMemo(() => {
+    const ordered: string[] = []
+    for (const entry of [...history].reverse()) {
+      for (const task of entry.tasks ?? []) {
+        if (task.name && !task.name.startsWith('__')) ordered.push(task.name)
+      }
+    }
+    return ordered
+  }, [history])
+
   return {
     threads,
+    nodesThatRan,
+    hasMoreThreads,
+    loadingMore,
+    loadMoreThreads,
+    historyTruncated,
     threadId,
     state,
     history,

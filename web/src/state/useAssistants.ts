@@ -54,6 +54,13 @@ export function useAssistants(connection: Connection | null): AssistantsState {
       assistantFingerprint.current = null
       return
     }
+    // Clear immediately rather than when the first response lands: otherwise
+    // the previous server's graph list stays in the picker, and picking one
+    // shows a graph that does not exist on the server now selected.
+    setAssistants([])
+    setSelectedId(null)
+    assistantFingerprint.current = null
+
     let cancelled = false
     let timer: number | undefined
     setLoading(true)

@@ -6,12 +6,25 @@ export interface ThreadListProps {
   threads: Thread[]
   activeId: string | null
   error?: string | null
+  hasMore?: boolean
+  loadingMore?: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRefresh: () => void
+  onLoadMore?: () => void
 }
 
-export function ThreadList({ threads, activeId, error, onSelect, onDelete, onRefresh }: ThreadListProps) {
+export function ThreadList({
+  threads,
+  activeId,
+  error,
+  hasMore,
+  loadingMore,
+  onSelect,
+  onDelete,
+  onRefresh,
+  onLoadMore,
+}: ThreadListProps) {
   // Deleting a thread destroys every checkpoint in it and cannot be undone, so
   // the button asks first. Two-step in place rather than window.confirm, which
   // is easy to dismiss reflexively.
@@ -65,6 +78,13 @@ export function ThreadList({ threads, activeId, error, onSelect, onDelete, onRef
             )}
           </li>
         ))}
+        {hasMore && (
+          <li className="thread-more">
+            <button type="button" className="link-btn" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? 'loading…' : 'load older threads'}
+            </button>
+          </li>
+        )}
       </ul>
     </section>
   )

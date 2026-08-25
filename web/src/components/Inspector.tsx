@@ -17,6 +17,8 @@ export interface InspectorProps {
   activeCheckpointId: string | null
   /** False when there is no thread to fork, or a run is already in flight. */
   canFork: boolean
+  /** The server had more checkpoints than we asked for. */
+  historyTruncated?: boolean
   onForkFrom: (checkpointId: string) => void
 }
 
@@ -28,6 +30,7 @@ export function Inspector({
   selectedNode,
   activeCheckpointId,
   canFork,
+  historyTruncated,
   onForkFrom,
 }: InspectorProps) {
   const [tab, setTab] = useState<Tab>('state')
@@ -64,6 +67,7 @@ export function Inspector({
             history={history}
             activeCheckpointId={activeCheckpointId}
             canFork={canFork}
+            truncated={Boolean(historyTruncated)}
             onForkFrom={onForkFrom}
           />
         )}
@@ -200,12 +204,14 @@ function HistoryTab({
   history,
   activeCheckpointId,
   canFork,
+  truncated,
   onForkFrom,
 }: {
   history: ThreadState[]
   activeCheckpointId: string | null
   /** False when there is no thread to fork, or a run is already in flight. */
   canFork: boolean
+  truncated: boolean
   onForkFrom: (checkpointId: string) => void
 }) {
   if (history.length === 0) {
@@ -213,6 +219,11 @@ function HistoryTab({
   }
   return (
     <ol className="checkpoints">
+      {truncated && (
+        <li className="muted small pad">
+          Showing the most recent {history.length} checkpoints. Earlier steps of this run are not listed.
+        </li>
+      )}
       {history.map((entry) => {
         const id = entry.checkpoint_id ?? entry.checkpoint?.checkpoint_id ?? ''
         const step = (entry.metadata as { step?: number } | undefined)?.step

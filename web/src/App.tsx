@@ -51,8 +51,13 @@ export default function App() {
   const hasLiveRun = runner.run.log.length > 0
   useEffect(() => {
     if (hasLiveRun || runner.isActive || !threads.state) return
-    runner.hydrate(threads.state.values ?? null, threads.state.interrupts[0] ?? null, threads.state.next ?? [])
-  }, [threads.state, hasLiveRun, runner.isActive, runner.hydrate])
+    runner.hydrate(
+      threads.state.values ?? null,
+      threads.state.interrupts?.[0] ?? null,
+      threads.state.next ?? [],
+      threads.nodesThatRan,
+    )
+  }, [threads.state, threads.nodesThatRan, hasLiveRun, runner.isActive, runner.hydrate])
 
   useEffect(() => {
     if (assistants.reloadCount === 0) return
@@ -157,6 +162,9 @@ export default function App() {
             onSelect={threads.selectThread}
             onDelete={(id) => void threads.deleteThread(id)}
             error={threads.error}
+            hasMore={threads.hasMoreThreads}
+            loadingMore={threads.loadingMore}
+            onLoadMore={() => void threads.loadMoreThreads()}
             onRefresh={threads.refreshThreads}
           />
         </div>
@@ -188,6 +196,7 @@ export default function App() {
           selectedNode={selectedNode}
           activeCheckpointId={threads.state?.checkpoint_id ?? null}
           canFork={Boolean(threads.threadId) && !runner.isActive}
+          historyTruncated={threads.historyTruncated}
           onForkFrom={handleFork}
         />
       </main>

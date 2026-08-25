@@ -127,8 +127,15 @@ export function useServers() {
   const removeServer = useCallback(
     (id: string) => {
       writeApiKey(id, undefined)
-      setServers((prev) => (Array.isArray(prev) ? prev.filter((s) => s.id !== id) : []))
-      setActiveId((prev) => (prev === id ? null : prev))
+      let remaining: StoredServer[] = []
+      setServers((prev) => {
+        remaining = (Array.isArray(prev) ? prev : []).filter((s) => s.id !== id)
+        return remaining
+      })
+      // Fall through to whatever is left. Leaving activeId null while the
+      // picker still rendered a name meant the top bar showed a server that
+      // was not selected, with no way to re-select it from the top bar.
+      setActiveId((prev) => (prev === id ? (remaining[0]?.id ?? null) : prev))
     },
     [setServers, setActiveId],
   )

@@ -1,5 +1,5 @@
 /** Compose an input, start a run, resume an interrupt, cancel. */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AssistantSchemas, Interrupt } from '../api/types'
 import type { RunState } from '../state/runReducer'
 import { schemaFieldHints, sampleFromSchema } from '../lib/schema'
@@ -33,6 +33,16 @@ export function RunPanel({
 }: RunPanelProps) {
   const [text, setText] = useState('{}')
   const [touched, setTouched] = useState(false)
+  const lastGraph = useRef(schemas?.graph_id)
+
+  // A different graph has a different input shape, so carrying the old JSON
+  // over means the Run button quietly submits something meaningless to it.
+  useEffect(() => {
+    if (schemas?.graph_id === lastGraph.current) return
+    lastGraph.current = schemas?.graph_id
+    setTouched(false)
+    setText('{}')
+  }, [schemas?.graph_id])
 
   // Start empty rather than pre-filled. LangGraph marks every field of a
   // TypedDict state as required, so a "required fields" seed would be the
