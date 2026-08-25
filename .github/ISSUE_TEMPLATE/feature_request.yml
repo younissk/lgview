@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest something lgview should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing, two things that are settled and will be declined:
+
+        - **Authoring graphs on the canvas.** lgview reads; your code is the
+          source of truth. Anything that requires parsing or generating Python
+          is out of scope permanently.
+        - **Showing the condition on a conditional edge.** The server does not
+          send it, so drawing it would mean inventing it.
+
+        See the house rules in
+        [CONTRIBUTING.md](https://github.com/younissk/lgview/blob/main/CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        The situation you are in when you want this — not the feature itself.
+        The best requests describe a moment of friction.
+      placeholder: >
+        When a run fails I can see which node went red, but I have to switch to
+        the terminal to read the traceback.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. A rough sketch is fine.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Including "nothing, I just live with it".

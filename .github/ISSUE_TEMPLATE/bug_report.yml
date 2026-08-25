@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in lgview behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. The four fields below are the ones almost every
+        report leaves out, and without them a bug usually cannot be reproduced.
+
+        **Do not report a security problem here** — see
+        [SECURITY.md](https://github.com/younissk/lgview/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+      placeholder: |
+        I clicked "resume from here" on a checkpoint and nothing happened.
+        I expected the run to fork from that point.
+    validations:
+      required: true
+
+  - type: input
+    id: lgview-version
+    attributes:
+      label: lgview version
+      description: Output of `lgview --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: server-version
+    attributes:
+      label: LangGraph server version
+      description: The `version` field from `curl -s <your-server>/info`.
+      placeholder: "0.13.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: server-kind
+    attributes:
+      label: What are you connected to
+      options:
+        - Local `langgraph dev`
+        - Self-hosted deployment
+        - LangGraph Platform
+        - Something else (say so below)
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: How you started lgview
+      description: The full command, with any secret redacted.
+      placeholder: "npx lgview --server http://127.0.0.1:2024"
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console and terminal output
+      description: >
+        Any errors from the browser console, and anything lgview printed in the
+        terminal. Rendered as code, no backticks needed.
+      render: shell
+
+  - type: textarea
+    id: graph
+    attributes:
+      label: The graph, if relevant
+      description: >
+        Often the fastest possible repro. `curl -s <server>/assistants/<graph-name>/graph`
+        — or a minimal graph that reproduces it. Redact anything private.
+      render: json
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked that the LangGraph server itself is reachable and healthy (`curl <server>/ok`).
+          required: true
+        - label: I searched existing issues.
+          required: true
