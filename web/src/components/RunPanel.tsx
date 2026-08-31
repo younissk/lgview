@@ -4,6 +4,7 @@ import type { AssistantSchemas, Interrupt } from '../api/types'
 import type { RunState } from '../state/runReducer'
 import { schemaFieldHints, sampleFromSchema } from '../lib/schema'
 import { formatDuration } from '../lib/format'
+import { Icon } from './Icon'
 
 export interface RunPanelProps {
   schemas: AssistantSchemas | null
@@ -66,8 +67,15 @@ export function RunPanel({
       <header className="panel-head">
         <h2>Run</h2>
         <div className="panel-head-actions">
-          <button type="button" className="btn-ghost" onClick={onNewThread} disabled={disabled}>
-            New thread
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onNewThread}
+            disabled={disabled}
+            aria-label="Start a new thread"
+            title="Start a new thread"
+          >
+            <Icon name="plus" size={14} />
           </button>
         </div>
       </header>
@@ -125,6 +133,7 @@ export function RunPanel({
       <div className="run-actions">
         {isActive ? (
           <button type="button" className="btn-danger" onClick={onCancel}>
+            <Icon name="stop" size={12} />
             Cancel run
           </button>
         ) : (
@@ -135,6 +144,7 @@ export function RunPanel({
             disabled={!canRun}
             title={parked ? 'This thread is waiting on an interrupt — answer it below to continue' : undefined}
           >
+            <Icon name="play" size={12} />
             {hasThread ? 'Run' : 'Run in a new thread'}
           </button>
         )}

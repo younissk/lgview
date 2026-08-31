@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GraphCanvas } from './components/GraphCanvas'
 import { Inspector } from './components/Inspector'
+import { Resizer } from './components/Resizer'
 import { RunPanel } from './components/RunPanel'
 import { RunStatusAnnouncer } from './components/RunStatusAnnouncer'
 import { ServerDialog } from './components/ServerDialog'
@@ -9,9 +10,16 @@ import { TopBar } from './components/TopBar'
 import type { LayoutDirection } from './lib/layout'
 import { useAssistants } from './state/useAssistants'
 import { useLocalStorage } from './state/useLocalStorage'
+import { useMediaQuery } from './state/useMediaQuery'
 import { useRunner } from './state/useRunner'
 import { useServers } from './state/useServers'
 import { useThreads } from './state/useThreads'
+
+const SIDEBAR = { min: 220, max: 460, default: 292 }
+const INSPECTOR = { min: 260, max: 620, default: 384 }
+
+/** Below this the three columns stop fitting, and the side panels become drawers. */
+const COMPACT_QUERY = '(max-width: 1023px)'
 
 export default function App() {
   const servers = useServers()
@@ -19,6 +27,12 @@ export default function App() {
   const [direction, setDirection] = useLocalStorage<LayoutDirection>('lgview.direction.v1', 'TB')
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [reloadNotice, setReloadNotice] = useState(false)
+
+  const [sidebarWidth, setSidebarWidth] = useLocalStorage('lgview.sidebarWidth.v1', SIDEBAR.default)
+  const [inspectorWidth, setInspectorWidth] = useLocalStorage('lgview.inspectorWidth.v1', INSPECTOR.default)
+  const compact = useMediaQuery(COMPACT_QUERY)
+  /** Which drawer is open. Only meaningful while compact. */
+  const [drawer, setDrawer] = useState<'run' | 'inspect' | null>(null)
 
   const assistants = useAssistants(servers.connection)
   const graphId = assistants.selected?.graph_id ?? null
@@ -66,26 +80,40 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [assistants.reloadCount])
 
+  // A drawer is a compact-mode idea; leaving one "open" while the window grows
+  // would strand it as an overlay on a layout that already has room for it.
+  useEffect(() => {
+    if (!compact) setDrawer(null)
+  }, [compact])
+
+  useEffect(() => {
+    if (!drawer) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDrawer(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawer])
+
   const handleRun = useCallback(
     async (input: Record<string, unknown> | null) => {
       const threadId = threads.threadId ?? (await threads.createThread({ graph_id: graphId ?? undefined }))
       if (!threadId) return
-      // Claim the thread before starting. The "clean slate on thread change"
-      // effect below runs on the very next render, and without this it reset
-      // the run we just started -- so the first run of every session dropped to
-      // `idle` mid-flight, Cancel reverted to Run, and a second click launched
-      // a duplicate.
+      // Claim the thread before starting, so the clean-slate effect above does
+      // not reset the run we are about to launch.
       lastThread.current = threadId
+      if (compact) setDrawer(null)
       await runner.start({ input, threadId })
     },
-    [threads.threadId, threads.createThread, graphId, runner.start],
+    [threads.threadId, threads.createThread, graphId, runner.start, compact],
   )
 
   const handleFork = useCallback(
     (checkpointId: string) => {
+      if (compact) setDrawer(null)
       void runner.start({ input: null, checkpointId })
     },
-    [runner.start],
+    [runner.start, compact],
   )
 
   // Cmd/Ctrl+Enter runs, from anywhere -- except while the graph is parked on
@@ -94,8 +122,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !runner.isActive && !parked) {
-        const button = document.querySelector<HTMLButtonElement>('.run-actions .btn-primary')
-        button?.click()
+        document.querySelector<HTMLButtonElement>('.run-actions .btn-primary')?.click()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -104,8 +131,14 @@ export default function App() {
 
   const offline = servers.status === 'offline'
 
+  const layoutStyle = compact
+    ? undefined
+    : {
+        gridTemplateColumns: `${sidebarWidth}px var(--resizer-w) minmax(0, 1fr) var(--resizer-w) ${inspectorWidth}px`,
+      }
+
   return (
-    <div className="app">
+    <div className="app" data-compact={compact ? 'true' : undefined}>
       <TopBar
         servers={servers.servers}
         activeId={servers.activeId}
@@ -115,6 +148,9 @@ export default function App() {
         selectedAssistantId={assistants.selected?.assistant_id ?? null}
         direction={direction}
         reloadNotice={reloadNotice}
+        compact={compact}
+        openDrawer={drawer}
+        onToggleDrawer={(which) => setDrawer((prev) => (prev === which ? null : which))}
         onSelectServer={servers.selectServer}
         onSelectAssistant={assistants.select}
         onManageServers={() => setDialogOpen(true)}
@@ -142,8 +178,8 @@ export default function App() {
 
       <RunStatusAnnouncer run={runner.run} />
 
-      <main className="layout">
-        <div className="sidebar">
+      <main className="layout" style={layoutStyle}>
+        <div className={`sidebar${drawer === 'run' ? ' is-open' : ''}`} aria-hidden={compact && drawer !== 'run'}>
           <RunPanel
             schemas={assistants.schemas}
             run={runner.run}
@@ -159,7 +195,10 @@ export default function App() {
           <ThreadList
             threads={threads.threads}
             activeId={threads.threadId}
-            onSelect={threads.selectThread}
+            onSelect={(id) => {
+              threads.selectThread(id)
+              if (compact) setDrawer(null)
+            }}
             onDelete={(id) => void threads.deleteThread(id)}
             error={threads.error}
             hasMore={threads.hasMoreThreads}
@@ -168,6 +207,18 @@ export default function App() {
             onRefresh={threads.refreshThreads}
           />
         </div>
+
+        {!compact && (
+          <Resizer
+            label="Run panel"
+            width={sidebarWidth}
+            min={SIDEBAR.min}
+            max={SIDEBAR.max}
+            direction={1}
+            onResize={setSidebarWidth}
+            onReset={() => setSidebarWidth(SIDEBAR.default)}
+          />
+        )}
 
         <div className="canvas">
           {assistants.error && !assistants.graph ? (
@@ -188,17 +239,36 @@ export default function App() {
           )}
         </div>
 
-        <Inspector
-          run={runner.run}
-          threadState={threads.state}
-          history={threads.history}
-          schemas={assistants.schemas}
-          selectedNode={selectedNode}
-          activeCheckpointId={threads.state?.checkpoint_id ?? null}
-          canFork={Boolean(threads.threadId) && !runner.isActive}
-          historyTruncated={threads.historyTruncated}
-          onForkFrom={handleFork}
-        />
+        {!compact && (
+          <Resizer
+            label="Inspector"
+            width={inspectorWidth}
+            min={INSPECTOR.min}
+            max={INSPECTOR.max}
+            direction={-1}
+            onResize={setInspectorWidth}
+            onReset={() => setInspectorWidth(INSPECTOR.default)}
+          />
+        )}
+
+        <div
+          className={`inspector-slot${drawer === 'inspect' ? ' is-open' : ''}`}
+          aria-hidden={compact && drawer !== 'inspect'}
+        >
+          <Inspector
+            run={runner.run}
+            threadState={threads.state}
+            history={threads.history}
+            schemas={assistants.schemas}
+            selectedNode={selectedNode}
+            activeCheckpointId={threads.state?.checkpoint_id ?? null}
+            canFork={Boolean(threads.threadId) && !runner.isActive}
+            historyTruncated={threads.historyTruncated}
+            onForkFrom={handleFork}
+          />
+        </div>
+
+        {compact && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(null)} />}
       </main>
 
       <ServerDialog

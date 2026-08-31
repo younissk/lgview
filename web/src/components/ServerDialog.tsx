@@ -1,6 +1,7 @@
 /** Add, pick, or forget LangGraph servers. */
 import { useEffect, useRef, useState } from 'react'
 import type { ServerEntry } from '../state/useServers'
+import { Icon } from './Icon'
 
 export interface ServerDialogProps {
   open: boolean
@@ -69,7 +70,12 @@ export function ServerDialog({ open, servers, activeId, onClose, onAdd, onRemove
         aria-label="LangGraph servers"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2>LangGraph servers</h2>
+        <div className="modal-head">
+          <h2>LangGraph servers</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" title="Close">
+            <Icon name="close" size={15} />
+          </button>
+        </div>
         <p className="muted">
           Anything that speaks the LangGraph server API: <code>langgraph dev</code>, a self-hosted deployment, or a
           Platform URL.

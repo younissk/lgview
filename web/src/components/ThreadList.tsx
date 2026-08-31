@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Thread } from '../api/types'
 import { formatRelative, shortId } from '../lib/format'
+import { Icon } from './Icon'
 
 export interface ThreadListProps {
   threads: Thread[]
@@ -40,8 +41,8 @@ export function ThreadList({
     <section className="panel thread-panel">
       <header className="panel-head">
         <h2>Threads</h2>
-        <button type="button" className="btn-ghost" onClick={onRefresh}>
-          refresh
+        <button type="button" className="icon-btn" onClick={onRefresh} aria-label="Refresh threads" title="Refresh threads">
+          <Icon name="refresh" size={14} />
         </button>
       </header>
       {error && <p className="field-error pad" role="alert">{error}</p>}
@@ -68,12 +69,12 @@ export function ThreadList({
             ) : (
               <button
                 type="button"
-                className="link-btn danger"
+                className="icon-btn icon-btn-sm danger"
                 aria-label={`Delete thread ${shortId(thread.thread_id, 10)} and all its checkpoints`}
                 title="Delete this thread and all its checkpoints"
                 onClick={() => setPendingDelete(thread.thread_id)}
               >
-                &times;
+                <Icon name="trash" size={13} />
               </button>
             )}
           </li>

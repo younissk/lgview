@@ -1,6 +1,7 @@
 import type { Assistant, ServerInfo } from '../api/types'
 import type { ConnectionStatus, ServerEntry } from '../state/useServers'
 import type { LayoutDirection } from '../lib/layout'
+import { Icon } from './Icon'
 
 export interface TopBarProps {
   servers: ServerEntry[]
@@ -11,6 +12,9 @@ export interface TopBarProps {
   selectedAssistantId: string | null
   direction: LayoutDirection
   reloadNotice: boolean
+  compact: boolean
+  openDrawer: 'run' | 'inspect' | null
+  onToggleDrawer: (which: 'run' | 'inspect') => void
   onSelectServer: (id: string) => void
   onSelectAssistant: (id: string) => void
   onManageServers: () => void
@@ -26,17 +30,35 @@ export function TopBar({
   selectedAssistantId,
   direction,
   reloadNotice,
+  compact,
+  openDrawer,
+  onToggleDrawer,
   onSelectServer,
   onSelectAssistant,
   onManageServers,
   onToggleDirection,
 }: TopBarProps) {
+  const directionLabel = direction === 'TB' ? 'Switch to horizontal layout' : 'Switch to vertical layout'
+
   return (
     <header className="topbar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">lgview</span>
       </div>
+
+      {compact && (
+        <button
+          type="button"
+          className={`icon-btn${openDrawer === 'run' ? ' is-active' : ''}`}
+          aria-label="Show the run panel and threads"
+          aria-expanded={openDrawer === 'run'}
+          title="Run panel and threads"
+          onClick={() => onToggleDrawer('run')}
+        >
+          <Icon name="panelLeft" />
+        </button>
+      )}
 
       <div className="topbar-group">
         <label className="select-wrap">
@@ -54,12 +76,17 @@ export function TopBar({
             ))}
           </select>
         </label>
-        <button type="button" className="btn-ghost" onClick={onManageServers}>
-          manage
+        <button type="button" className="icon-btn" aria-label="Manage servers" title="Manage servers" onClick={onManageServers}>
+          <Icon name="settings" />
         </button>
-        <span className={`status status-${status}`} title={info?.version ? `langgraph-api ${info.version}` : status}>
-          <span className="dot" />
-          {status === 'online' ? (info?.version ? `v${info.version}` : 'online') : status}
+        <span
+          className={`status status-${status}`}
+          title={info?.version ? `langgraph-api ${info.version}` : status}
+        >
+          <span className="dot" aria-hidden="true" />
+          <span className="status-text">
+            {status === 'online' ? (info?.version ? `v${info.version}` : 'online') : status}
+          </span>
         </span>
       </div>
 
@@ -80,7 +107,7 @@ export function TopBar({
           </select>
         </label>
         {reloadNotice && (
-          <span className="reload-pill" title="The server hot-reloaded and the topology changed">
+          <span className="reload-pill" role="status" title="The server hot-reloaded and the topology changed">
             reloaded
           </span>
         )}
@@ -88,9 +115,22 @@ export function TopBar({
 
       <div className="topbar-spacer" />
 
-      <button type="button" className="btn-ghost" onClick={onToggleDirection} title="Toggle layout direction">
-        {direction === 'TB' ? 'vertical' : 'horizontal'}
+      <button type="button" className="icon-btn" onClick={onToggleDirection} aria-label={directionLabel} title={directionLabel}>
+        <Icon name={direction === 'TB' ? 'layoutVertical' : 'layoutHorizontal'} />
       </button>
+
+      {compact && (
+        <button
+          type="button"
+          className={`icon-btn${openDrawer === 'inspect' ? ' is-active' : ''}`}
+          aria-label="Show the inspector"
+          aria-expanded={openDrawer === 'inspect'}
+          title="Inspector"
+          onClick={() => onToggleDrawer('inspect')}
+        >
+          <Icon name="panelRight" />
+        </button>
+      )}
     </header>
   )
 }

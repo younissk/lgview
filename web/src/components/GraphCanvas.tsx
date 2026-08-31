@@ -25,6 +25,7 @@ import '@xyflow/react/dist/style.css'
 import type { GraphJson } from '../api/types'
 import { layoutGraph, type GraphNodeData, type LayoutDirection, type NodeStatus } from '../lib/layout'
 import { GraphNodeView, TerminalNodeView } from './GraphNodes'
+import { Icon } from './Icon'
 
 const nodeTypes = { graphNode: GraphNodeView, terminal: TerminalNodeView }
 
@@ -131,7 +132,11 @@ function Canvas({
     // re-measure them -- without this, edges could disappear from the DOM
     // entirely and never come back.
     for (const node of nodes) updateNodeInternals(node.id)
-    fitView({ padding: 0.18, duration: 280 })
+    // Re-measurement is asynchronous. Fitting in the same tick uses the
+    // dimensions from *before* the nudge, which is how the graph ended up
+    // framed against stale sizes and zoomed past 1:1.
+    const handle = requestAnimationFrame(() => fitView({ padding: 0.18, duration: 280 }))
+    return () => cancelAnimationFrame(handle)
   }, [nodesInitialized, nodes, fitView, updateNodeInternals])
 
   // Status arrives many times a second during a run; patch data in place.
@@ -215,10 +220,10 @@ function Canvas({
           without accessible names, and the fit-view one did not respond. */}
       <div className="canvas-controls">
         <button type="button" onClick={() => zoomIn({ duration: 160 })} aria-label="Zoom in" title="Zoom in">
-          +
+          <Icon name="zoomIn" size={15} />
         </button>
         <button type="button" onClick={() => zoomOut({ duration: 160 })} aria-label="Zoom out" title="Zoom out">
-          &minus;
+          <Icon name="zoomOut" size={15} />
         </button>
         <button
           type="button"
@@ -226,7 +231,7 @@ function Canvas({
           aria-label="Fit graph to view"
           title="Fit graph to view"
         >
-          &#9974;
+          <Icon name="fit" size={15} />
         </button>
       </div>
     </ReactFlow>
