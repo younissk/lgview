@@ -128,7 +128,7 @@ diff unreviewable.
 
 ## Documentation
 
-The site at <https://younissk.github.io/lgview/> is built from `docs/` with
+The site at <https://youniss.dev/lgview/> is built from `docs/` with
 MkDocs Material and deploys on push to `main`.
 
 ```bash

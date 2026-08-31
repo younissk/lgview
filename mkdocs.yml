@@ -1,6 +1,6 @@
 site_name: lgview
 site_description: A fast, local, open-source web UI for any LangGraph server.
-site_url: https://younissk.github.io/lgview/
+site_url: https://youniss.dev/lgview/
 repo_url: https://github.com/younissk/lgview
 repo_name: younissk/lgview
 edit_uri: edit/main/docs/
