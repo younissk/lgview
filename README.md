@@ -14,6 +14,8 @@ npx lgview             # in another terminal
 That's it. `lgview` finds the server on `http://127.0.0.1:2024`, lists the
 graphs it exposes, and opens a browser.
 
+**[Documentation →](https://younissk.github.io/lgview/)**
+
 ![lgview showing a human-in-the-loop graph: the canvas with dashed conditional
 edges, the run panel with the graph's input fields, the thread list, and the
 state inspector](docs/media/lgview.png)

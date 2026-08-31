@@ -8,3 +8,4 @@ __pycache__/
 .langgraph_api/
 audits/
 coverage/
+site/

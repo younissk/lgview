@@ -126,6 +126,19 @@ closely.
 Never commit a repo-wide reformat inside a feature change; it makes the real
 diff unreviewable.
 
+## Documentation
+
+The site at <https://younissk.github.io/lgview/> is built from `docs/` with
+MkDocs Material and deploys on push to `main`.
+
+```bash
+pip install -r requirements-docs.txt
+mkdocs serve
+```
+
+Builds run with `--strict`, so a broken internal link fails CI rather than
+shipping a dead page.
+
 ## Reporting security issues
 
 Do not open a public issue. See [SECURITY.md](SECURITY.md).

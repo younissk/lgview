@@ -1,0 +1,90 @@
+site_name: lgview
+site_description: A fast, local, open-source web UI for any LangGraph server.
+site_url: https://younissk.github.io/lgview/
+repo_url: https://github.com/younissk/lgview
+repo_name: younissk/lgview
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Follow system theme
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/younissk/lgview
+    - icon: fontawesome/brands/npm
+      link: https://www.npmjs.com/package/lgview
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guide:
+      - Connecting to a server: guide/connecting.md
+      - Running a graph: guide/running.md
+      - Interrupts: guide/interrupts.md
+      - Time travel: guide/time-travel.md
+      - Keyboard and accessibility: guide/keyboard.md
+  - Reference:
+      - CLI: reference/cli.md
+      - How it works: reference/architecture.md
+      - Compatibility: reference/compatibility.md
+  - Security: security.md
+  - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
